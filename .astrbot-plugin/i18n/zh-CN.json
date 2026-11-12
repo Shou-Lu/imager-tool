@@ -1,0 +1,589 @@
+{
+  "metadata": {
+    "display_name": "星屿图集",
+    "short_desc": "随机图、图库浏览与可视化面板，接入你的 img-api 图床。",
+    "desc": "接入兼容 img-api 的图床服务（接口文档：https://imgapi.bixygames.com/docs），支持随机图、图库、图片详情、统计与头像；安装后需在插件配置中填写你的图床 API 地址。"
+  },
+  "config": {
+    "base_url": {
+      "description": "图床 API 地址",
+      "hint": "默认留空，插件不会发起任何图床请求。填写你部署的 img-api 地址，例如 https://imgapi.bixygames.com；接口文档：https://imgapi.bixygames.com/docs。自建实例也可，需带 http(s)://。"
+    },
+    "token": {
+      "description": "API Token",
+      "hint": "在图床「个人信息 → API Token」中创建。默认按 /api/v1?token=xxx 调用；PNG、原图、非公开列表和更高限流都需要它。"
+    },
+    "default_gallery": {
+      "description": "默认图库",
+      "labels": [
+        "V1 全部图库",
+        "V2 接口图库"
+      ],
+      "subtitles": [
+        "包含全部已审核图片，数量通常最多",
+        "只包含已加入 V2 图库的图片，适合作为背景图"
+      ],
+      "hint": "聊天指令与 WebUI 首次打开时使用的图库。"
+    },
+    "default_type": {
+      "description": "默认输出格式",
+      "labels": [
+        "WebP（推荐）",
+        "PNG",
+        "原图"
+      ],
+      "subtitles": [
+        "体积小、加载快，游客也可获取",
+        "需要有效 Token，兼容只支持 PNG 的客户端",
+        "需要有效 Token；未配置时不可选"
+      ],
+      "hint": "聊天中发送图片时使用的格式。"
+    },
+    "tag_mode": {
+      "description": "多标签匹配方式",
+      "labels": [
+        "任意匹配（any）",
+        "全部匹配（all）"
+      ],
+      "subtitles": [
+        "命中任意一个标签即可",
+        "必须同时包含全部标签"
+      ],
+      "hint": "当填写多个标签时生效。"
+    },
+    "send_mode": {
+      "description": "聊天图片发送方式",
+      "labels": [
+        "下载后发送（推荐）",
+        "直接发送链接"
+      ],
+      "subtitles": [
+        "带 Token 请求并转成图片消息，兼容性最好",
+        "由平台自行下载链接，无法携带 Token，原图会降级"
+      ],
+      "hint": "下载后发送可以避免 Token 出现在 URL 中。"
+    },
+    "allow_origin": {
+      "description": "允许输出原图",
+      "hint": "关闭后原图不可用；WebP/PNG 不受影响。原图需要 Token，且体积更大。"
+    },
+    "show_meta": {
+      "description": "图片附带信息",
+      "hint": "在图片消息前附带图库、尺寸、标签和图片 ID。"
+    },
+    "request_timeout": {
+      "description": "请求超时（秒）",
+      "hint": "连接图床 API 与下载图片的超时时间。"
+    },
+    "retry_times": {
+      "description": "失败重试次数",
+      "hint": "仅在网络错误或 5xx 时重试，429 限流不会重试。"
+    },
+    "max_image_mb": {
+      "description": "单张图片大小上限（MB）",
+      "hint": "超过上限的图片将拒绝下载，避免占用过多内存与带宽。"
+    },
+    "cooldown_seconds": {
+      "description": "随机图冷却（秒）",
+      "hint": "同一会话同一用户两次 /随机图 之间的最小间隔，0 表示不限制。"
+    },
+    "cache_ttl": {
+      "description": "统计缓存时间（秒）",
+      "hint": "缓存 /stats 与 /health 结果，减少对图床的请求。0 表示不缓存。"
+    },
+    "command_page_size": {
+      "description": "指令列表每页数量",
+      "hint": "/图库列表 每页显示的图片条数。"
+    },
+    "webui_page_size": {
+      "description": "WebUI 每页数量",
+      "hint": "图库面板中每页加载的图片数量。"
+    },
+    "max_tags": {
+      "description": "单次最多标签数",
+      "hint": "解析 /随机图 和 WebUI 标签输入时最多保留的标签数量。"
+    },
+    "token_mode": {
+      "description": "Token 传递方式",
+      "labels": [
+        "URL 参数（?token=）",
+        "Authorization 请求头",
+        "两者都带"
+      ],
+      "subtitles": [
+        "按 /api/v1?token=xxx 的正式形式调用",
+        "更安全，Token 不出现在 URL 中",
+        "兼容性最好，但会同时出现在 URL 与请求头中"
+      ],
+      "hint": "默认 query。URL 参数可能被日志或代理记录，若站点支持请求头，建议改用 header。"
+    },
+    "exclude_tags": {
+      "description": "随机图排除标签",
+      "hint": "随机图会跳过包含这些标签的图片。默认排除 #avatar，避免把头像图当作随机图调用。留空表示不排除。"
+    },
+    "exclude_retries": {
+      "description": "排除标签重试次数",
+      "hint": "随机到排除标签时重新抽取的次数；全部命中则返回友好提示。"
+    }
+  },
+  "views": {
+    "gallery": {
+      "title": "图库面板",
+      "description": "浏览随机图、检索图库、查看图片详情并管理连接设置。",
+      "heading": "星屿图集",
+      "subtitle": "梦星小图床 · 随机图、图库浏览与连接设置。",
+      "refresh": "刷新",
+      "health": {
+        "unknown": "检测中",
+        "online": "在线",
+        "offline": "离线",
+        "notConfigured": "未配置"
+      },
+      "tab": {
+        "browse": "浏览",
+        "library": "图库",
+        "settings": "设置",
+        "about": "关于"
+      },
+      "stats": {
+        "count": "图片总数",
+        "size": "图库大小",
+        "tags": "标签数量",
+        "newest": "最新上传"
+      },
+      "control": {
+        "title": "随机图设置",
+        "gallery": "图库",
+        "tags": "标签",
+        "tagsPlaceholder": "例如 dragon,fish（留空为全部）",
+        "tagMode": "匹配方式",
+        "type": "输出格式",
+        "id": "指定图片 ID",
+        "idPlaceholder": "可选，填写后直接获取这张图",
+        "random": "换一张",
+        "originDisabled": "原图输出已在插件设置中关闭，请使用 WebP/PNG。",
+        "originNoToken": "PNG 和原图需要有效 Token；未配置时只能使用 WebP。",
+        "originReady": "原图请求需要 Token，图片体积可能较大。",
+        "excluded": "随机图已排除：{tags}",
+        "tagExcluded": "这些标签已被排除，随机图会跳过：{tags}",
+        "pngNoToken": "PNG 需要有效 Token，已改用 WebP。"
+      },
+      "gallery": {
+        "v1": "V1 全部图库",
+        "v2": "V2 接口图库"
+      },
+      "tagMode": {
+        "any": "任意匹配",
+        "all": "全部匹配"
+      },
+      "type": {
+        "webp": "WebP",
+        "png": "PNG",
+        "origin": "原图"
+      },
+      "preview": {
+        "empty": "点击「换一张」加载图片",
+        "loading": "正在加载图片…",
+        "noUrl": "图床没有返回可用的图片地址。",
+        "failed": "图片加载失败，请检查网络或站点地址。",
+        "title": "图片预览"
+      },
+      "meta": {
+        "dimensions": "尺寸",
+        "variant": "格式",
+        "tags": "标签",
+        "watermark": "水印",
+        "yes": "有",
+        "no": "无",
+        "id": "ID"
+      },
+      "action": {
+        "link": "复制链接",
+        "markdown": "复制 Markdown",
+        "id": "复制 ID",
+        "origin": "查看原图",
+        "download": "下载",
+        "copy": "复制",
+        "copyData": "复制图片数据",
+        "copied": "已复制",
+        "copiedManual": "请手动选中并复制",
+        "downloading": "已开始下载",
+        "preparing": "正在准备图片…"
+      },
+      "copy": {
+        "title": "复制内容",
+        "manual": "无法直接访问剪贴板，请按 Ctrl/⌘ + C 复制下面的内容。",
+        "tryAgain": "尝试复制"
+      },
+      "tags": {
+        "empty": "暂无标签"
+      },
+      "library": {
+        "title": "全部图片",
+        "searchPlaceholder": "搜索标题、来源或标签",
+        "tagPlaceholder": "标签筛选",
+        "search": "搜索",
+        "empty": "没有找到图片。",
+        "failed": "图库加载失败。",
+        "profileHint": "Token 管理地址：",
+        "total": "共 {total} 张",
+        "page": "第 {page} / {pages} 页",
+        "perPage": "{n} / 页",
+        "prev": "上一页",
+        "next": "下一页"
+      },
+      "info": {
+        "title": "图片详情",
+        "titleLabel": "标题",
+        "size": "大小",
+        "mime": "格式",
+        "tags": "标签",
+        "source": "来源",
+        "status": "状态",
+        "watermark": "接口水印",
+        "created": "上传时间",
+        "updated": "更新时间",
+        "url": "直链",
+        "webp": "WebP",
+        "api": "API",
+        "copyApi": "复制 API 地址",
+        "copyUrl": "复制直链"
+      },
+      "settings": {
+        "title": "连接设置",
+        "baseUrl": "图床站点地址",
+        "baseUrlHint": "留空时不会发起请求；填写你的 img-api 地址，例如 https://imgapi.bixygames.com。",
+        "token": "API Token",
+        "tokenPlaceholder": "粘贴 img_ 开头的 Token（可留空）",
+        "tokenPlaceholderSaved": "已保存 {token}，留空保持不变",
+        "tokenHint": "Token 只保存在插件配置中，不会回显完整内容；原图、非公开列表和更高限流都需要它。",
+        "tokenStateOn": "已配置 Token：{token}",
+        "tokenStateOff": "未配置 Token（仅 WebP / 公开接口）",
+        "clearToken": "清除已保存的 Token",
+        "defaultGallery": "默认图库",
+        "defaultType": "默认格式",
+        "tagMode": "默认匹配方式",
+        "sendMode": "聊天发送方式",
+        "sendModeBytes": "下载后发送",
+        "sendModeUrl": "直接发送链接",
+        "showMeta": "图片附带信息",
+        "allowOrigin": "允许请求原图",
+        "timeout": "超时（秒）",
+        "retry": "重试次数",
+        "maxImage": "图片上限（MB）",
+        "cooldown": "随机图冷却（秒）",
+        "cache": "统计缓存（秒）",
+        "maxTags": "最多标签数",
+        "webuiPage": "面板每页数量",
+        "commandPage": "指令每页数量",
+        "save": "保存设置",
+        "test": "测试连接",
+        "saving": "保存中…",
+        "saved": "已保存",
+        "saveFailed": "保存失败",
+        "needBase": "请填写图床地址。",
+        "testing": "测试中…",
+        "testOk": "连接正常{latency}{count}",
+        "testOkShort": "连接正常",
+        "testFail": "连接失败",
+        "tokenMode": "Token 传递方式",
+        "tokenModeQuery": "URL 参数（?token=）",
+        "tokenModeHeader": "Authorization 请求头",
+        "tokenModeBoth": "两者都带",
+        "tokenModeHint": "默认按 /api/v1?token=xxx 调用；URL 参数可能被日志或代理记录，站点支持时建议改用请求头。",
+        "excludeTags": "随机图排除标签",
+        "excludeRetries": "排除重试次数",
+        "connectionSection": "连接与认证",
+        "behaviorSection": "默认行为",
+        "limitsSection": "性能与限制",
+        "docsLabel": "接口文档",
+        "copyDocs": "复制",
+        "docsBlocked": "已复制文档地址；如果浏览器拦截了新窗口，请粘贴访问。"
+      },
+      "about": {
+        "title": "关于",
+        "desc": "本插件接入梦星的小图床公开 API，提供随机图、图库浏览、图片详情、统计与头像能力。",
+        "f1": "聊天指令：/随机图、/图库列表、/图库信息、/图库统计 等。",
+        "f2": "支持 V1 / V2 图库、标签筛选、WebP / PNG / 原图输出。",
+        "f3": "Token 仅用于服务端请求头，不会拼接到公开链接中。",
+        "f4": "配置与 AstrBot 插件配置面板共用同一份数据。",
+        "site": "站点",
+        "version": "插件版本",
+        "copyDocs": "复制 API 文档地址",
+        "copyProfile": "复制 Token 管理地址",
+        "unofficial": "本插件为社区作品，与图床站点无隶属关系；请遵守站点使用规则与速率限制。",
+        "siteInfo": "站点信息"
+      },
+      "error": {
+        "bridge": "请从 AstrBot 插件页打开此面板（Bridge 不可用）。",
+        "generic": "加载失败"
+      },
+      "sidebar": {
+        "gallery": "图库",
+        "manage": "管理",
+        "site": "梦星的小图床",
+        "siteName": "梦星的小图床",
+        "note": "社区插件 · 非官方"
+      },
+      "page": {
+        "browse": {
+          "title": "浏览",
+          "subtitle": "从图库随机抽取一张，支持标签、V2 与格式切换。"
+        },
+        "library": {
+          "title": "图库",
+          "subtitle": "分页查看站点已审核图片，支持搜索与标签筛选。"
+        },
+        "settings": {
+          "title": "设置",
+          "subtitle": "管理图床地址、Token、默认格式与请求限制。"
+        },
+        "about": {
+          "title": "关于",
+          "subtitle": "版本、接口与安全说明。"
+        }
+      },
+      "theme": {
+        "toLight": "切换到亮色",
+        "toDark": "切换到暗色"
+      },
+      "setup": {
+        "title": "尚未配置图床 API 地址",
+        "desc": "请到「设置」中填写你的 img-api 地址；插件默认不内置任何接口地址。",
+        "action": "去设置",
+        "required": "请先在设置中填写图床 API 地址。",
+        "notConfigured": "未配置"
+      }
+    }
+  },
+  "pages": {
+    "gallery": {
+      "title": "图库面板",
+      "description": "浏览随机图、检索图库、查看图片详情并管理连接设置。",
+      "heading": "星屿图集",
+      "subtitle": "梦星小图床 · 随机图、图库浏览与连接设置。",
+      "refresh": "刷新",
+      "health": {
+        "unknown": "检测中",
+        "online": "在线",
+        "offline": "离线",
+        "notConfigured": "未配置"
+      },
+      "tab": {
+        "browse": "浏览",
+        "library": "图库",
+        "settings": "设置",
+        "about": "关于"
+      },
+      "stats": {
+        "count": "图片总数",
+        "size": "图库大小",
+        "tags": "标签数量",
+        "newest": "最新上传"
+      },
+      "control": {
+        "title": "随机图设置",
+        "gallery": "图库",
+        "tags": "标签",
+        "tagsPlaceholder": "例如 dragon,fish（留空为全部）",
+        "tagMode": "匹配方式",
+        "type": "输出格式",
+        "id": "指定图片 ID",
+        "idPlaceholder": "可选，填写后直接获取这张图",
+        "random": "换一张",
+        "originDisabled": "原图输出已在插件设置中关闭，请使用 WebP/PNG。",
+        "originNoToken": "PNG 和原图需要有效 Token；未配置时只能使用 WebP。",
+        "originReady": "原图请求需要 Token，图片体积可能较大。",
+        "excluded": "随机图已排除：{tags}",
+        "tagExcluded": "这些标签已被排除，随机图会跳过：{tags}",
+        "pngNoToken": "PNG 需要有效 Token，已改用 WebP。"
+      },
+      "gallery": {
+        "v1": "V1 全部图库",
+        "v2": "V2 接口图库"
+      },
+      "tagMode": {
+        "any": "任意匹配",
+        "all": "全部匹配"
+      },
+      "type": {
+        "webp": "WebP",
+        "png": "PNG",
+        "origin": "原图"
+      },
+      "preview": {
+        "empty": "点击「换一张」加载图片",
+        "loading": "正在加载图片…",
+        "noUrl": "图床没有返回可用的图片地址。",
+        "failed": "图片加载失败，请检查网络或站点地址。",
+        "title": "图片预览"
+      },
+      "meta": {
+        "dimensions": "尺寸",
+        "variant": "格式",
+        "tags": "标签",
+        "watermark": "水印",
+        "yes": "有",
+        "no": "无",
+        "id": "ID"
+      },
+      "action": {
+        "link": "复制链接",
+        "markdown": "复制 Markdown",
+        "id": "复制 ID",
+        "origin": "查看原图",
+        "download": "下载",
+        "copy": "复制",
+        "copyData": "复制图片数据",
+        "copied": "已复制",
+        "copiedManual": "请手动选中并复制",
+        "downloading": "已开始下载",
+        "preparing": "正在准备图片…"
+      },
+      "copy": {
+        "title": "复制内容",
+        "manual": "无法直接访问剪贴板，请按 Ctrl/⌘ + C 复制下面的内容。",
+        "tryAgain": "尝试复制"
+      },
+      "tags": {
+        "empty": "暂无标签"
+      },
+      "library": {
+        "title": "全部图片",
+        "searchPlaceholder": "搜索标题、来源或标签",
+        "tagPlaceholder": "标签筛选",
+        "search": "搜索",
+        "empty": "没有找到图片。",
+        "failed": "图库加载失败。",
+        "profileHint": "Token 管理地址：",
+        "total": "共 {total} 张",
+        "page": "第 {page} / {pages} 页",
+        "perPage": "{n} / 页",
+        "prev": "上一页",
+        "next": "下一页"
+      },
+      "info": {
+        "title": "图片详情",
+        "titleLabel": "标题",
+        "size": "大小",
+        "mime": "格式",
+        "tags": "标签",
+        "source": "来源",
+        "status": "状态",
+        "watermark": "接口水印",
+        "created": "上传时间",
+        "updated": "更新时间",
+        "url": "直链",
+        "webp": "WebP",
+        "api": "API",
+        "copyApi": "复制 API 地址",
+        "copyUrl": "复制直链"
+      },
+      "settings": {
+        "title": "连接设置",
+        "baseUrl": "图床站点地址",
+        "baseUrlHint": "留空时不会发起请求；填写你的 img-api 地址，例如 https://imgapi.bixygames.com。",
+        "token": "API Token",
+        "tokenPlaceholder": "粘贴 img_ 开头的 Token（可留空）",
+        "tokenPlaceholderSaved": "已保存 {token}，留空保持不变",
+        "tokenHint": "Token 只保存在插件配置中，不会回显完整内容；原图、非公开列表和更高限流都需要它。",
+        "tokenStateOn": "已配置 Token：{token}",
+        "tokenStateOff": "未配置 Token（仅 WebP / 公开接口）",
+        "clearToken": "清除已保存的 Token",
+        "defaultGallery": "默认图库",
+        "defaultType": "默认格式",
+        "tagMode": "默认匹配方式",
+        "sendMode": "聊天发送方式",
+        "sendModeBytes": "下载后发送",
+        "sendModeUrl": "直接发送链接",
+        "showMeta": "图片附带信息",
+        "allowOrigin": "允许请求原图",
+        "timeout": "超时（秒）",
+        "retry": "重试次数",
+        "maxImage": "图片上限（MB）",
+        "cooldown": "随机图冷却（秒）",
+        "cache": "统计缓存（秒）",
+        "maxTags": "最多标签数",
+        "webuiPage": "面板每页数量",
+        "commandPage": "指令每页数量",
+        "save": "保存设置",
+        "test": "测试连接",
+        "saving": "保存中…",
+        "saved": "已保存",
+        "saveFailed": "保存失败",
+        "needBase": "请填写图床地址。",
+        "testing": "测试中…",
+        "testOk": "连接正常{latency}{count}",
+        "testOkShort": "连接正常",
+        "testFail": "连接失败",
+        "tokenMode": "Token 传递方式",
+        "tokenModeQuery": "URL 参数（?token=）",
+        "tokenModeHeader": "Authorization 请求头",
+        "tokenModeBoth": "两者都带",
+        "tokenModeHint": "默认按 /api/v1?token=xxx 调用；URL 参数可能被日志或代理记录，站点支持时建议改用请求头。",
+        "excludeTags": "随机图排除标签",
+        "excludeRetries": "排除重试次数",
+        "connectionSection": "连接与认证",
+        "behaviorSection": "默认行为",
+        "limitsSection": "性能与限制",
+        "docsLabel": "接口文档",
+        "copyDocs": "复制",
+        "docsBlocked": "已复制文档地址；如果浏览器拦截了新窗口，请粘贴访问。"
+      },
+      "about": {
+        "title": "关于",
+        "desc": "本插件接入梦星的小图床公开 API，提供随机图、图库浏览、图片详情、统计与头像能力。",
+        "f1": "聊天指令：/随机图、/图库列表、/图库信息、/图库统计 等。",
+        "f2": "支持 V1 / V2 图库、标签筛选、WebP / PNG / 原图输出。",
+        "f3": "Token 仅用于服务端请求头，不会拼接到公开链接中。",
+        "f4": "配置与 AstrBot 插件配置面板共用同一份数据。",
+        "site": "站点",
+        "version": "插件版本",
+        "copyDocs": "复制 API 文档地址",
+        "copyProfile": "复制 Token 管理地址",
+        "unofficial": "本插件为社区作品，与图床站点无隶属关系；请遵守站点使用规则与速率限制。",
+        "siteInfo": "站点信息"
+      },
+      "error": {
+        "bridge": "请从 AstrBot 插件页打开此面板（Bridge 不可用）。",
+        "generic": "加载失败"
+      },
+      "sidebar": {
+        "gallery": "图库",
+        "manage": "管理",
+        "site": "梦星的小图床",
+        "siteName": "梦星的小图床",
+        "note": "社区插件 · 非官方"
+      },
+      "page": {
+        "browse": {
+          "title": "浏览",
+          "subtitle": "从图库随机抽取一张，支持标签、V2 与格式切换。"
+        },
+        "library": {
+          "title": "图库",
+          "subtitle": "分页查看站点已审核图片，支持搜索与标签筛选。"
+        },
+        "settings": {
+          "title": "设置",
+          "subtitle": "管理图床地址、Token、默认格式与请求限制。"
+        },
+        "about": {
+          "title": "关于",
+          "subtitle": "版本、接口与安全说明。"
+        }
+      },
+      "theme": {
+        "toLight": "切换到亮色",
+        "toDark": "切换到暗色"
+      },
+      "setup": {
+        "title": "尚未配置图床 API 地址",
+        "desc": "请到「设置」中填写你的 img-api 地址；插件默认不内置任何接口地址。",
+        "action": "去设置",
+        "required": "请先在设置中填写图床 API 地址。",
+        "notConfigured": "未配置"
+      }
+    }
+  }
+}

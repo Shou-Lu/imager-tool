@@ -1,0 +1,12 @@
+__pycache__/
+*.py[cod]
+.ruff_cache/
+.pytest_cache/
+.venv/
+venv/
+dist/
+*.zip
+.DS_Store
+_preview*
+preview-image.*
+*.log

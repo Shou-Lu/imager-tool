@@ -1,0 +1,143 @@
+{
+  "base_url": {
+    "description": "图床 API 地址",
+    "type": "string",
+    "default": "",
+    "hint": "默认留空，插件不会发起任何图床请求。填写你部署的 img-api 地址，例如 https://imgapi.bixygames.com；接口文档：https://imgapi.bixygames.com/docs。自建实例也可，需带 http(s)://。",
+    "obvious_hint": true
+  },
+  "token": {
+    "description": "API Token",
+    "type": "string",
+    "default": "",
+    "secret": true,
+    "hint": "在图床「个人信息 → API Token」中创建。默认按 /api/v1?token=xxx 方式调用；PNG、原图、非公开列表和更高限流都需要它。",
+    "obvious_hint": true
+  },
+  "token_mode": {
+    "description": "Token 传递方式",
+    "type": "string",
+    "default": "query",
+    "options": ["query", "header", "both"],
+    "labels": ["URL 参数（?token=）", "Authorization 请求头", "两者都带"],
+    "subtitles": ["按 /api/v1?token=xxx 的正式形式调用", "更安全，Token 不出现在 URL 中", "兼容性最好，但会同时暴露在 URL 与请求头中"],
+    "hint": "默认 query。URL 参数可能被日志或代理记录，若站点支持请求头，建议改用 header。"
+  },
+  "default_gallery": {
+    "description": "默认图库",
+    "type": "string",
+    "default": "v1",
+    "options": ["v1", "v2"],
+    "labels": ["V1 全部图库", "V2 接口图库"],
+    "subtitles": ["包含全部已审核图片，数量通常最多", "只包含已加入 V2 图库的图片，适合作为背景图"],
+    "hint": "聊天指令与 WebUI 首次打开时使用的图库。"
+  },
+  "default_type": {
+    "description": "默认输出格式",
+    "type": "string",
+    "default": "webp",
+    "options": ["webp", "png", "origin"],
+    "labels": ["WebP（推荐）", "PNG", "原图"],
+    "subtitles": ["体积小、加载快，游客也可获取", "需要有效 Token，兼容只支持 PNG 的客户端", "需要有效 Token；未配置时不可选"],
+    "hint": "聊天中发送图片时使用的格式。"
+  },
+  "tag_mode": {
+    "description": "多标签匹配方式",
+    "type": "string",
+    "default": "any",
+    "options": ["any", "all"],
+    "labels": ["任意匹配（any）", "全部匹配（all）"],
+    "subtitles": ["命中任意一个标签即可", "必须同时包含全部标签"],
+    "hint": "当填写多个标签时生效。"
+  },
+  "send_mode": {
+    "description": "聊天图片发送方式",
+    "type": "string",
+    "default": "bytes",
+    "options": ["bytes", "url"],
+    "labels": ["下载后发送（推荐）", "直接发送链接"],
+    "subtitles": ["带 Token 请求并转成图片消息，兼容性最好", "由平台自行下载链接，无法携带 Token，原图会降级"],
+    "hint": "下载后发送可以避免 Token 出现在 URL 中。"
+  },
+  "allow_origin": {
+    "description": "允许输出原图",
+    "type": "bool",
+    "default": true,
+    "hint": "关闭后原图不可用；WebP/PNG 不受影响。原图需要 Token，且体积更大。"
+  },
+  "show_meta": {
+    "description": "图片附带信息",
+    "type": "bool",
+    "default": true,
+    "hint": "在图片消息前附带图库、尺寸、标签和图片 ID。"
+  },
+  "exclude_tags": {
+    "description": "随机图排除标签",
+    "type": "list",
+    "default": ["avatar"],
+    "hint": "随机图会跳过包含这些标签的图片。默认排除 #avatar，避免把头像图当作随机图调用。留空表示不排除。"
+  },
+  "exclude_retries": {
+    "description": "排除标签重试次数",
+    "type": "int",
+    "default": 5,
+    "slider": {"min": 1, "max": 10, "step": 1},
+    "hint": "随机到排除标签时重新抽取的次数；全部命中则返回友好提示。"
+  },
+  "request_timeout": {
+    "description": "请求超时（秒）",
+    "type": "int",
+    "default": 20,
+    "slider": {"min": 3, "max": 120, "step": 1},
+    "hint": "连接图床 API 与下载图片的超时时间。"
+  },
+  "retry_times": {
+    "description": "失败重试次数",
+    "type": "int",
+    "default": 1,
+    "slider": {"min": 0, "max": 3, "step": 1},
+    "hint": "仅在网络错误或 5xx 时重试，429 限流不会重试。"
+  },
+  "max_image_mb": {
+    "description": "单张图片大小上限（MB）",
+    "type": "int",
+    "default": 12,
+    "slider": {"min": 1, "max": 64, "step": 1},
+    "hint": "超过上限的图片将拒绝下载，避免占用过多内存与带宽。"
+  },
+  "cooldown_seconds": {
+    "description": "随机图冷却（秒）",
+    "type": "int",
+    "default": 3,
+    "slider": {"min": 0, "max": 600, "step": 1},
+    "hint": "同一会话同一用户两次 /随机图 之间的最小间隔，0 表示不限制。"
+  },
+  "cache_ttl": {
+    "description": "统计缓存时间（秒）",
+    "type": "int",
+    "default": 60,
+    "slider": {"min": 0, "max": 3600, "step": 10},
+    "hint": "缓存 /stats 与 /health 结果，减少对图床的请求。0 表示不缓存。"
+  },
+  "command_page_size": {
+    "description": "指令列表每页数量",
+    "type": "int",
+    "default": 8,
+    "slider": {"min": 1, "max": 20, "step": 1},
+    "hint": "/图库列表 每页显示的图片条数。"
+  },
+  "webui_page_size": {
+    "description": "WebUI 每页数量",
+    "type": "int",
+    "default": 24,
+    "slider": {"min": 6, "max": 60, "step": 6},
+    "hint": "图库面板中每页加载的图片数量。"
+  },
+  "max_tags": {
+    "description": "单次最多标签数",
+    "type": "int",
+    "default": 5,
+    "slider": {"min": 1, "max": 10, "step": 1},
+    "hint": "解析 /随机图 和 WebUI 标签输入时最多保留的标签数量。"
+  }
+}

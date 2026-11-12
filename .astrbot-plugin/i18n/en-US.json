@@ -1,0 +1,589 @@
+{
+  "metadata": {
+    "display_name": "Star Isle Gallery",
+    "short_desc": "Random images, gallery browsing and a visual panel for your img-api image bed.",
+    "desc": "Connects to an img-api compatible image bed (docs: https://imgapi.bixygames.com/docs) for random images, gallery listing, image details, stats and avatars. Configure the image bed API URL after installation."
+  },
+  "config": {
+    "base_url": {
+      "description": "Image bed API URL",
+      "hint": "Blank by default; the plugin will not call any image bed until this is set. Enter your img-api URL, e.g. https://imgapi.bixygames.com; docs: https://imgapi.bixygames.com/docs. Self-hosted instances are supported with http(s)://."
+    },
+    "token": {
+      "description": "API Token",
+      "hint": "Create one in Profile → API Token. Calls default to /api/v1?token=xxx; PNG, origin images, non-public listings and higher rate limits require it."
+    },
+    "default_gallery": {
+      "description": "Default gallery",
+      "labels": [
+        "V1 full gallery",
+        "V2 API gallery"
+      ],
+      "subtitles": [
+        "All approved images, usually the largest set",
+        "Only images added to the V2 gallery, good for wallpapers"
+      ],
+      "hint": "Used by chat commands and when the WebUI first opens."
+    },
+    "default_type": {
+      "description": "Default output format",
+      "labels": [
+        "WebP (recommended)",
+        "PNG",
+        "Origin"
+      ],
+      "subtitles": [
+        "Small and fast, available to guests",
+        "Requires a valid token; for clients that only accept PNG",
+        "Requires a valid token; unavailable when missing"
+      ],
+      "hint": "Image format used when sending pictures in chat."
+    },
+    "tag_mode": {
+      "description": "Multiple tag matching",
+      "labels": [
+        "Any tag (any)",
+        "All tags (all)"
+      ],
+      "subtitles": [
+        "Match any of the supplied tags",
+        "Must contain every supplied tag"
+      ],
+      "hint": "Applies when more than one tag is provided."
+    },
+    "send_mode": {
+      "description": "Chat image delivery",
+      "labels": [
+        "Download then send (recommended)",
+        "Send URL directly"
+      ],
+      "subtitles": [
+        "Requests with the token and sends an image message",
+        "The platform downloads the URL without the token; origin falls back"
+      ],
+      "hint": "Downloading first keeps the token out of public URLs."
+    },
+    "allow_origin": {
+      "description": "Allow origin images",
+      "hint": "When disabled, origin images are unavailable; WebP/PNG are unaffected. Origin requires a token and is larger."
+    },
+    "show_meta": {
+      "description": "Attach image information",
+      "hint": "Adds gallery, dimensions, tags and image ID before the image message."
+    },
+    "request_timeout": {
+      "description": "Request timeout (seconds)",
+      "hint": "Timeout for API calls and image downloads."
+    },
+    "retry_times": {
+      "description": "Retry attempts",
+      "hint": "Only network errors and 5xx responses are retried; 429 rate limits are not."
+    },
+    "max_image_mb": {
+      "description": "Max image size (MB)",
+      "hint": "Images above this limit are rejected to protect memory and bandwidth."
+    },
+    "cooldown_seconds": {
+      "description": "Random image cooldown (seconds)",
+      "hint": "Minimum interval between two /random commands from the same user in the same session. 0 disables it."
+    },
+    "cache_ttl": {
+      "description": "Stats cache TTL (seconds)",
+      "hint": "Caches /stats and /health results to reduce requests. 0 disables caching."
+    },
+    "command_page_size": {
+      "description": "Command page size",
+      "hint": "Number of images shown per page by the gallery list command."
+    },
+    "webui_page_size": {
+      "description": "WebUI page size",
+      "hint": "Number of images loaded per page in the gallery panel."
+    },
+    "max_tags": {
+      "description": "Max tags per request",
+      "hint": "Maximum number of tags kept when parsing commands and WebUI input."
+    },
+    "token_mode": {
+      "description": "Token delivery",
+      "labels": [
+        "URL query (?token=)",
+        "Authorization header",
+        "Both"
+      ],
+      "subtitles": [
+        "Uses the canonical /api/v1?token=xxx form",
+        "Safer: the token never appears in the URL",
+        "Maximum compatibility, but the token appears in both places"
+      ],
+      "hint": "Defaults to query. URLs may be recorded by logs or proxies; prefer header when the site supports it."
+    },
+    "exclude_tags": {
+      "description": "Random image excluded tags",
+      "hint": "Random images containing these tags are skipped. #avatar is excluded by default so profile images are not served as random images. Leave empty to disable."
+    },
+    "exclude_retries": {
+      "description": "Excluded tag retries",
+      "hint": "How many times to redraw when an excluded tag is hit; a friendly error is returned if every attempt is excluded."
+    }
+  },
+  "views": {
+    "gallery": {
+      "title": "Gallery Panel",
+      "description": "Browse random images, search the gallery, inspect image details and manage connection settings.",
+      "heading": "Star Isle Gallery",
+      "subtitle": "Bixy image bed · random images, gallery browsing and connection settings.",
+      "refresh": "Refresh",
+      "health": {
+        "unknown": "Checking",
+        "online": "Online",
+        "offline": "Offline",
+        "notConfigured": "Not configured"
+      },
+      "tab": {
+        "browse": "Browse",
+        "library": "Library",
+        "settings": "Settings",
+        "about": "About"
+      },
+      "stats": {
+        "count": "Images",
+        "size": "Gallery size",
+        "tags": "Tags",
+        "newest": "Newest"
+      },
+      "control": {
+        "title": "Random image options",
+        "gallery": "Gallery",
+        "tags": "Tags",
+        "tagsPlaceholder": "e.g. dragon,fish (empty for all)",
+        "tagMode": "Tag matching",
+        "type": "Output format",
+        "id": "Specific image ID",
+        "idPlaceholder": "Optional: fetch this exact image",
+        "random": "Another one",
+        "originDisabled": "Origin output is disabled in the plugin settings; use WebP/PNG.",
+        "originNoToken": "PNG and origin images require a valid token; only WebP is available without one.",
+        "originReady": "Origin requests require a token and may be large.",
+        "excluded": "Random images exclude: {tags}",
+        "tagExcluded": "These tags are excluded; random images will skip: {tags}",
+        "pngNoToken": "PNG requires a valid token; switched to WebP."
+      },
+      "gallery": {
+        "v1": "V1 full gallery",
+        "v2": "V2 API gallery"
+      },
+      "tagMode": {
+        "any": "Any tag",
+        "all": "All tags"
+      },
+      "type": {
+        "webp": "WebP",
+        "png": "PNG",
+        "origin": "Origin"
+      },
+      "preview": {
+        "empty": "Click “Another one” to load an image",
+        "loading": "Loading image…",
+        "noUrl": "The API did not return a usable image URL.",
+        "failed": "Failed to load the image. Check the network or site URL.",
+        "title": "Image preview"
+      },
+      "meta": {
+        "dimensions": "Size",
+        "variant": "Format",
+        "tags": "Tags",
+        "watermark": "Watermark",
+        "yes": "Yes",
+        "no": "No",
+        "id": "ID"
+      },
+      "action": {
+        "link": "Copy link",
+        "markdown": "Copy Markdown",
+        "id": "Copy ID",
+        "origin": "View original",
+        "download": "Download",
+        "copy": "Copy",
+        "copyData": "Copy image data",
+        "copied": "Copied",
+        "copiedManual": "Please select and copy manually",
+        "downloading": "Download started",
+        "preparing": "Preparing image…"
+      },
+      "copy": {
+        "title": "Copy content",
+        "manual": "Clipboard access is unavailable. Press Ctrl/⌘ + C to copy the text below.",
+        "tryAgain": "Try copying"
+      },
+      "tags": {
+        "empty": "No tags yet"
+      },
+      "library": {
+        "title": "All images",
+        "searchPlaceholder": "Search title, source or tags",
+        "tagPlaceholder": "Filter by tag",
+        "search": "Search",
+        "empty": "No images found.",
+        "failed": "Failed to load the gallery.",
+        "profileHint": "Token management URL:",
+        "total": "{total} images",
+        "page": "Page {page} / {pages}",
+        "perPage": "{n} / page",
+        "prev": "Previous",
+        "next": "Next"
+      },
+      "info": {
+        "title": "Image details",
+        "titleLabel": "Title",
+        "size": "Size",
+        "mime": "Format",
+        "tags": "Tags",
+        "source": "Source",
+        "status": "Status",
+        "watermark": "API watermark",
+        "created": "Created",
+        "updated": "Updated",
+        "url": "Direct URL",
+        "webp": "WebP",
+        "api": "API",
+        "copyApi": "Copy API URL",
+        "copyUrl": "Copy direct URL"
+      },
+      "settings": {
+        "title": "Connection settings",
+        "baseUrl": "Image bed base URL",
+        "baseUrlHint": "No requests are made while this is blank. Enter your img-api URL, e.g. https://imgapi.bixygames.com.",
+        "token": "API Token",
+        "tokenPlaceholder": "Paste a token starting with img_ (optional)",
+        "tokenPlaceholderSaved": "Saved {token}; leave empty to keep it",
+        "tokenHint": "The token is stored in the plugin config and never echoed in full. It is required for origin images, non-public listings and higher rate limits.",
+        "tokenStateOn": "Token configured: {token}",
+        "tokenStateOff": "No token (WebP / public endpoints only)",
+        "clearToken": "Clear the saved token",
+        "defaultGallery": "Default gallery",
+        "defaultType": "Default format",
+        "tagMode": "Default tag matching",
+        "sendMode": "Chat delivery mode",
+        "sendModeBytes": "Download then send",
+        "sendModeUrl": "Send URL directly",
+        "showMeta": "Attach image information",
+        "allowOrigin": "Allow origin requests",
+        "timeout": "Timeout (s)",
+        "retry": "Retries",
+        "maxImage": "Image limit (MB)",
+        "cooldown": "Random cooldown (s)",
+        "cache": "Stats cache (s)",
+        "maxTags": "Max tags",
+        "webuiPage": "Panel page size",
+        "commandPage": "Command page size",
+        "save": "Save settings",
+        "test": "Test connection",
+        "saving": "Saving…",
+        "saved": "Saved",
+        "saveFailed": "Save failed",
+        "needBase": "Please enter the image bed URL.",
+        "testing": "Testing…",
+        "testOk": "Connection OK{latency}{count}",
+        "testOkShort": "Connection OK",
+        "testFail": "Connection failed",
+        "tokenMode": "Token delivery",
+        "tokenModeQuery": "URL query (?token=)",
+        "tokenModeHeader": "Authorization header",
+        "tokenModeBoth": "Both",
+        "tokenModeHint": "Calls default to /api/v1?token=xxx. URLs may be recorded by logs or proxies; prefer the header when possible.",
+        "excludeTags": "Excluded random tags",
+        "excludeRetries": "Excluded retries",
+        "connectionSection": "Connection & auth",
+        "behaviorSection": "Default behavior",
+        "limitsSection": "Performance & limits",
+        "docsLabel": "API docs",
+        "copyDocs": "Copy",
+        "docsBlocked": "Docs URL copied. If the browser blocked the new window, paste it into a tab."
+      },
+      "about": {
+        "title": "About",
+        "desc": "This plugin uses the public Bixy image bed API for random images, gallery browsing, image details, stats and avatars.",
+        "f1": "Chat commands: /随机图, /图库列表, /图库信息, /图库统计 and more.",
+        "f2": "Supports V1 / V2 galleries, tag filters and WebP / PNG / origin output.",
+        "f3": "The token is only used in server-side request headers and never added to public URLs.",
+        "f4": "Settings are shared with the AstrBot plugin configuration panel.",
+        "site": "Site",
+        "version": "Version",
+        "copyDocs": "Copy API docs URL",
+        "copyProfile": "Copy token management URL",
+        "unofficial": "This is a community plugin and is not affiliated with the image bed site. Follow the site rules and rate limits.",
+        "siteInfo": "Site info"
+      },
+      "error": {
+        "bridge": "Open this panel from the AstrBot plugin page (bridge unavailable).",
+        "generic": "Failed to load"
+      },
+      "sidebar": {
+        "gallery": "Gallery",
+        "manage": "Manage",
+        "site": "Bixy Image Bed",
+        "siteName": "Bixy Image Bed",
+        "note": "Community plugin · Unofficial"
+      },
+      "page": {
+        "browse": {
+          "title": "Browse",
+          "subtitle": "Draw a random image with tags, V2 and format options."
+        },
+        "library": {
+          "title": "Library",
+          "subtitle": "Browse approved images with search and tag filters."
+        },
+        "settings": {
+          "title": "Settings",
+          "subtitle": "Manage the image bed URL, token, defaults and limits."
+        },
+        "about": {
+          "title": "About",
+          "subtitle": "Version, API and security notes."
+        }
+      },
+      "theme": {
+        "toLight": "Switch to light",
+        "toDark": "Switch to dark"
+      },
+      "setup": {
+        "title": "Image bed API is not configured",
+        "desc": "Fill in your img-api URL under Settings. The plugin ships without any default endpoint.",
+        "action": "Open settings",
+        "required": "Please set the image bed API URL in Settings first.",
+        "notConfigured": "Not configured"
+      }
+    }
+  },
+  "pages": {
+    "gallery": {
+      "title": "Gallery Panel",
+      "description": "Browse random images, search the gallery, inspect image details and manage connection settings.",
+      "heading": "Star Isle Gallery",
+      "subtitle": "Bixy image bed · random images, gallery browsing and connection settings.",
+      "refresh": "Refresh",
+      "health": {
+        "unknown": "Checking",
+        "online": "Online",
+        "offline": "Offline",
+        "notConfigured": "Not configured"
+      },
+      "tab": {
+        "browse": "Browse",
+        "library": "Library",
+        "settings": "Settings",
+        "about": "About"
+      },
+      "stats": {
+        "count": "Images",
+        "size": "Gallery size",
+        "tags": "Tags",
+        "newest": "Newest"
+      },
+      "control": {
+        "title": "Random image options",
+        "gallery": "Gallery",
+        "tags": "Tags",
+        "tagsPlaceholder": "e.g. dragon,fish (empty for all)",
+        "tagMode": "Tag matching",
+        "type": "Output format",
+        "id": "Specific image ID",
+        "idPlaceholder": "Optional: fetch this exact image",
+        "random": "Another one",
+        "originDisabled": "Origin output is disabled in the plugin settings; use WebP/PNG.",
+        "originNoToken": "PNG and origin images require a valid token; only WebP is available without one.",
+        "originReady": "Origin requests require a token and may be large.",
+        "excluded": "Random images exclude: {tags}",
+        "tagExcluded": "These tags are excluded; random images will skip: {tags}",
+        "pngNoToken": "PNG requires a valid token; switched to WebP."
+      },
+      "gallery": {
+        "v1": "V1 full gallery",
+        "v2": "V2 API gallery"
+      },
+      "tagMode": {
+        "any": "Any tag",
+        "all": "All tags"
+      },
+      "type": {
+        "webp": "WebP",
+        "png": "PNG",
+        "origin": "Origin"
+      },
+      "preview": {
+        "empty": "Click “Another one” to load an image",
+        "loading": "Loading image…",
+        "noUrl": "The API did not return a usable image URL.",
+        "failed": "Failed to load the image. Check the network or site URL.",
+        "title": "Image preview"
+      },
+      "meta": {
+        "dimensions": "Size",
+        "variant": "Format",
+        "tags": "Tags",
+        "watermark": "Watermark",
+        "yes": "Yes",
+        "no": "No",
+        "id": "ID"
+      },
+      "action": {
+        "link": "Copy link",
+        "markdown": "Copy Markdown",
+        "id": "Copy ID",
+        "origin": "View original",
+        "download": "Download",
+        "copy": "Copy",
+        "copyData": "Copy image data",
+        "copied": "Copied",
+        "copiedManual": "Please select and copy manually",
+        "downloading": "Download started",
+        "preparing": "Preparing image…"
+      },
+      "copy": {
+        "title": "Copy content",
+        "manual": "Clipboard access is unavailable. Press Ctrl/⌘ + C to copy the text below.",
+        "tryAgain": "Try copying"
+      },
+      "tags": {
+        "empty": "No tags yet"
+      },
+      "library": {
+        "title": "All images",
+        "searchPlaceholder": "Search title, source or tags",
+        "tagPlaceholder": "Filter by tag",
+        "search": "Search",
+        "empty": "No images found.",
+        "failed": "Failed to load the gallery.",
+        "profileHint": "Token management URL:",
+        "total": "{total} images",
+        "page": "Page {page} / {pages}",
+        "perPage": "{n} / page",
+        "prev": "Previous",
+        "next": "Next"
+      },
+      "info": {
+        "title": "Image details",
+        "titleLabel": "Title",
+        "size": "Size",
+        "mime": "Format",
+        "tags": "Tags",
+        "source": "Source",
+        "status": "Status",
+        "watermark": "API watermark",
+        "created": "Created",
+        "updated": "Updated",
+        "url": "Direct URL",
+        "webp": "WebP",
+        "api": "API",
+        "copyApi": "Copy API URL",
+        "copyUrl": "Copy direct URL"
+      },
+      "settings": {
+        "title": "Connection settings",
+        "baseUrl": "Image bed base URL",
+        "baseUrlHint": "No requests are made while this is blank. Enter your img-api URL, e.g. https://imgapi.bixygames.com.",
+        "token": "API Token",
+        "tokenPlaceholder": "Paste a token starting with img_ (optional)",
+        "tokenPlaceholderSaved": "Saved {token}; leave empty to keep it",
+        "tokenHint": "The token is stored in the plugin config and never echoed in full. It is required for origin images, non-public listings and higher rate limits.",
+        "tokenStateOn": "Token configured: {token}",
+        "tokenStateOff": "No token (WebP / public endpoints only)",
+        "clearToken": "Clear the saved token",
+        "defaultGallery": "Default gallery",
+        "defaultType": "Default format",
+        "tagMode": "Default tag matching",
+        "sendMode": "Chat delivery mode",
+        "sendModeBytes": "Download then send",
+        "sendModeUrl": "Send URL directly",
+        "showMeta": "Attach image information",
+        "allowOrigin": "Allow origin requests",
+        "timeout": "Timeout (s)",
+        "retry": "Retries",
+        "maxImage": "Image limit (MB)",
+        "cooldown": "Random cooldown (s)",
+        "cache": "Stats cache (s)",
+        "maxTags": "Max tags",
+        "webuiPage": "Panel page size",
+        "commandPage": "Command page size",
+        "save": "Save settings",
+        "test": "Test connection",
+        "saving": "Saving…",
+        "saved": "Saved",
+        "saveFailed": "Save failed",
+        "needBase": "Please enter the image bed URL.",
+        "testing": "Testing…",
+        "testOk": "Connection OK{latency}{count}",
+        "testOkShort": "Connection OK",
+        "testFail": "Connection failed",
+        "tokenMode": "Token delivery",
+        "tokenModeQuery": "URL query (?token=)",
+        "tokenModeHeader": "Authorization header",
+        "tokenModeBoth": "Both",
+        "tokenModeHint": "Calls default to /api/v1?token=xxx. URLs may be recorded by logs or proxies; prefer the header when possible.",
+        "excludeTags": "Excluded random tags",
+        "excludeRetries": "Excluded retries",
+        "connectionSection": "Connection & auth",
+        "behaviorSection": "Default behavior",
+        "limitsSection": "Performance & limits",
+        "docsLabel": "API docs",
+        "copyDocs": "Copy",
+        "docsBlocked": "Docs URL copied. If the browser blocked the new window, paste it into a tab."
+      },
+      "about": {
+        "title": "About",
+        "desc": "This plugin uses the public Bixy image bed API for random images, gallery browsing, image details, stats and avatars.",
+        "f1": "Chat commands: /随机图, /图库列表, /图库信息, /图库统计 and more.",
+        "f2": "Supports V1 / V2 galleries, tag filters and WebP / PNG / origin output.",
+        "f3": "The token is only used in server-side request headers and never added to public URLs.",
+        "f4": "Settings are shared with the AstrBot plugin configuration panel.",
+        "site": "Site",
+        "version": "Version",
+        "copyDocs": "Copy API docs URL",
+        "copyProfile": "Copy token management URL",
+        "unofficial": "This is a community plugin and is not affiliated with the image bed site. Follow the site rules and rate limits.",
+        "siteInfo": "Site info"
+      },
+      "error": {
+        "bridge": "Open this panel from the AstrBot plugin page (bridge unavailable).",
+        "generic": "Failed to load"
+      },
+      "sidebar": {
+        "gallery": "Gallery",
+        "manage": "Manage",
+        "site": "Bixy Image Bed",
+        "siteName": "Bixy Image Bed",
+        "note": "Community plugin · Unofficial"
+      },
+      "page": {
+        "browse": {
+          "title": "Browse",
+          "subtitle": "Draw a random image with tags, V2 and format options."
+        },
+        "library": {
+          "title": "Library",
+          "subtitle": "Browse approved images with search and tag filters."
+        },
+        "settings": {
+          "title": "Settings",
+          "subtitle": "Manage the image bed URL, token, defaults and limits."
+        },
+        "about": {
+          "title": "About",
+          "subtitle": "Version, API and security notes."
+        }
+      },
+      "theme": {
+        "toLight": "Switch to light",
+        "toDark": "Switch to dark"
+      },
+      "setup": {
+        "title": "Image bed API is not configured",
+        "desc": "Fill in your img-api URL under Settings. The plugin ships without any default endpoint.",
+        "action": "Open settings",
+        "required": "Please set the image bed API URL in Settings first.",
+        "notConfigured": "Not configured"
+      }
+    }
+  }
+}

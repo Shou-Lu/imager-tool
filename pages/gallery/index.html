@@ -1,0 +1,545 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>星屿图集</title>
+    <link rel="stylesheet" href="./style.css" />
+  </head>
+  <body>
+    <div class="app app-shell">
+      <aside class="sidebar">
+        <div class="brand-block">
+          <div class="brand-mark" aria-hidden="true">图</div>
+          <div class="brand-copy">
+            <strong data-i18n="views.gallery.heading">星屿图集</strong>
+            <span data-i18n="views.gallery.sidebar.site">梦星的小图床</span>
+          </div>
+        </div>
+
+        <nav class="side-nav">
+          <p class="nav-label" data-i18n="views.gallery.sidebar.gallery">图库</p>
+          <button class="tab active" data-tab="browse" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="3" />
+              <circle cx="8.5" cy="8.5" r="1.6" />
+              <path d="m21 15-5-5L5 21" />
+            </svg>
+            <span data-i18n="views.gallery.tab.browse">浏览</span>
+          </button>
+          <button class="tab" data-tab="library" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <rect x="3" y="3" width="7" height="7" rx="1.6" />
+              <rect x="14" y="3" width="7" height="7" rx="1.6" />
+              <rect x="3" y="14" width="7" height="7" rx="1.6" />
+              <rect x="14" y="14" width="7" height="7" rx="1.6" />
+            </svg>
+            <span data-i18n="views.gallery.tab.library">图库</span>
+          </button>
+
+          <p class="nav-label" data-i18n="views.gallery.sidebar.manage">管理</p>
+          <button class="tab" data-tab="settings" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M4 6h16M4 12h16M4 18h16" />
+              <circle cx="9" cy="6" r="2" />
+              <circle cx="15" cy="12" r="2" />
+              <circle cx="8" cy="18" r="2" />
+            </svg>
+            <span data-i18n="views.gallery.tab.settings">设置</span>
+          </button>
+          <button class="tab" data-tab="about" type="button">
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="9" />
+              <path d="M12 11v5" />
+              <circle cx="12" cy="7.5" r="0.9" fill="currentColor" stroke="none" />
+            </svg>
+            <span data-i18n="views.gallery.tab.about">关于</span>
+          </button>
+        </nav>
+
+        <div class="sidebar-foot">
+          <div class="side-site">
+            <span class="side-dot"></span>
+            <div>
+              <b data-i18n="views.gallery.sidebar.siteName">梦星的小图床</b>
+              <span>img-api</span>
+            </div>
+          </div>
+          <p class="side-note" data-i18n="views.gallery.sidebar.note">社区插件 · 非官方</p>
+        </div>
+      </aside>
+
+      <div class="main">
+        <header class="topbar">
+          <div class="page-heading">
+            <h2 id="page-title">浏览</h2>
+            <p id="page-subtitle">从图库随机抽取一张，支持标签、V2 与格式切换。</p>
+          </div>
+          <div class="topbar-actions">
+            <span class="badge" id="health-badge">
+              <span class="dot"></span>
+              <span data-i18n="views.gallery.health.unknown">检测中</span>
+            </span>
+            <button class="icon-btn" id="theme-toggle" type="button" title="切换主题">☾</button>
+            <button class="btn ghost" id="refresh-all" type="button" data-i18n="views.gallery.refresh">
+              刷新
+            </button>
+          </div>
+        </header>
+
+        <main class="content">
+          <div class="notice setup-notice" id="setup-notice" hidden>
+            <div class="setup-copy">
+              <strong data-i18n="views.gallery.setup.title">尚未配置图床 API 地址</strong>
+              <p>
+                <span data-i18n="views.gallery.setup.desc">
+                  请到「设置」中填写你的 img-api 地址；插件默认不内置任何接口地址。
+                </span>
+              </p>
+            </div>
+            <button class="btn primary" id="goto-settings" type="button" data-i18n="views.gallery.setup.action">
+              去设置
+            </button>
+          </div>
+
+          <!-- ---------------------------------------------------------- -->
+          <!-- 浏览 -->
+          <!-- ---------------------------------------------------------- -->
+          <section class="panel" id="tab-browse">
+            <div class="stats">
+              <div class="stat">
+                <span class="stat-label" data-i18n="views.gallery.stats.count">图片总数</span>
+                <strong id="stat-count">-</strong>
+              </div>
+              <div class="stat">
+                <span class="stat-label" data-i18n="views.gallery.stats.size">图库大小</span>
+                <strong id="stat-size">-</strong>
+                <small id="stat-size-sub"></small>
+              </div>
+              <div class="stat">
+                <span class="stat-label" data-i18n="views.gallery.stats.tags">标签数量</span>
+                <strong id="stat-tags">-</strong>
+              </div>
+              <div class="stat">
+                <span class="stat-label" data-i18n="views.gallery.stats.newest">最新上传</span>
+                <strong id="stat-newest">-</strong>
+              </div>
+            </div>
+
+            <div class="browse-layout">
+              <div class="card control-card">
+                <div class="card-head">
+                  <h2 class="card-title" data-i18n="views.gallery.control.title">随机图设置</h2>
+                  <span class="subtle">V1 / V2</span>
+                </div>
+
+                <div class="field">
+                  <label data-i18n="views.gallery.control.gallery">图库</label>
+                  <div class="segmented" id="gallery-switch">
+                    <button type="button" data-gallery="v1" class="active">
+                      <span data-i18n="views.gallery.gallery.v1">V1 全部图库</span>
+                    </button>
+                    <button type="button" data-gallery="v2">
+                      <span data-i18n="views.gallery.gallery.v2">V2 接口图库</span>
+                    </button>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label for="tag-input" data-i18n="views.gallery.control.tags">标签</label>
+                  <input
+                    id="tag-input"
+                    type="text"
+                    autocomplete="off"
+                    data-i18n-placeholder="views.gallery.control.tagsPlaceholder"
+                    placeholder="例如 dragon,fish（留空为全部）"
+                  />
+                  <div class="chips" id="tag-chips"></div>
+                  <p class="hint" id="exclude-hint"></p>
+                </div>
+
+                <div class="field-row">
+                  <div class="field">
+                    <label for="tag-mode" data-i18n="views.gallery.control.tagMode">匹配方式</label>
+                    <select id="tag-mode">
+                      <option value="any" data-i18n="views.gallery.tagMode.any">任意匹配</option>
+                      <option value="all" data-i18n="views.gallery.tagMode.all">全部匹配</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="type-select" data-i18n="views.gallery.control.type">输出格式</label>
+                    <select id="type-select">
+                      <option value="webp" data-i18n="views.gallery.type.webp">WebP</option>
+                      <option value="png" data-i18n="views.gallery.type.png">PNG</option>
+                      <option value="origin" data-i18n="views.gallery.type.origin">原图</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label for="id-input" data-i18n="views.gallery.control.id">指定图片 ID</label>
+                  <input
+                    id="id-input"
+                    type="text"
+                    autocomplete="off"
+                    spellcheck="false"
+                    data-i18n-placeholder="views.gallery.control.idPlaceholder"
+                    placeholder="可选，填写后直接获取这张图"
+                  />
+                </div>
+
+                <button class="btn primary block" id="random-btn" type="button">
+                  <span data-i18n="views.gallery.control.random">换一张</span>
+                </button>
+                <p class="hint" id="origin-hint"></p>
+              </div>
+
+              <div class="card preview-card">
+                <div class="card-head">
+                  <h2 class="card-title" data-i18n="views.gallery.preview.title">图片预览</h2>
+                  <span class="subtle" id="preview-format"></span>
+                </div>
+
+                <div class="preview-frame" id="preview-frame">
+                  <img id="preview-img" alt="preview" hidden />
+                  <div class="preview-empty" id="preview-empty">
+                    <div class="spinner" id="preview-spinner" hidden></div>
+                    <p id="preview-empty-text" data-i18n="views.gallery.preview.empty">
+                      点击「换一张」加载图片
+                    </p>
+                  </div>
+                </div>
+
+                <div class="meta-row" id="preview-meta"></div>
+                <div class="actions">
+                  <button class="btn" type="button" data-action="link" data-i18n="views.gallery.action.link">
+                    复制链接
+                  </button>
+                  <button class="btn" type="button" data-action="markdown" data-i18n="views.gallery.action.markdown">
+                    复制 Markdown
+                  </button>
+                  <button class="btn" type="button" data-action="id" data-i18n="views.gallery.action.id">
+                    复制 ID
+                  </button>
+                  <button class="btn" type="button" data-action="origin" data-i18n="views.gallery.action.origin">
+                    查看原图
+                  </button>
+                  <button class="btn" type="button" data-action="download" data-i18n="views.gallery.action.download">
+                    下载
+                  </button>
+                </div>
+                <p class="notice" id="preview-notice" hidden></p>
+              </div>
+            </div>
+          </section>
+
+          <!-- ---------------------------------------------------------- -->
+          <!-- 图库 -->
+          <!-- ---------------------------------------------------------- -->
+          <section class="panel" id="tab-library" hidden>
+            <div class="card">
+              <div class="card-head">
+                <h2 class="card-title" data-i18n="views.gallery.library.title">全部图片</h2>
+                <span class="subtle" id="lib-total"></span>
+              </div>
+
+              <div class="library-toolbar">
+                <input
+                  id="lib-q"
+                  type="search"
+                  autocomplete="off"
+                  data-i18n-placeholder="views.gallery.library.searchPlaceholder"
+                  placeholder="搜索标题、来源或标签"
+                />
+                <input
+                  id="lib-tag"
+                  type="text"
+                  autocomplete="off"
+                  data-i18n-placeholder="views.gallery.library.tagPlaceholder"
+                  placeholder="标签筛选"
+                />
+                <select id="lib-page-size">
+                  <option value="12">12 / 页</option>
+                  <option value="24" selected>24 / 页</option>
+                  <option value="36">36 / 页</option>
+                  <option value="48">48 / 页</option>
+                </select>
+                <button class="btn primary" id="lib-search" type="button" data-i18n="views.gallery.library.search">
+                  搜索
+                </button>
+              </div>
+
+              <div class="notice" id="lib-notice" hidden></div>
+              <div class="grid" id="lib-grid"></div>
+              <div class="pager">
+                <button class="btn" id="lib-prev" type="button" data-i18n="views.gallery.library.prev">
+                  上一页
+                </button>
+                <span class="subtle" id="lib-page-label"></span>
+                <button class="btn" id="lib-next" type="button" data-i18n="views.gallery.library.next">
+                  下一页
+                </button>
+              </div>
+            </div>
+          </section>
+
+          <!-- ---------------------------------------------------------- -->
+          <!-- 设置 -->
+          <!-- ---------------------------------------------------------- -->
+          <section class="panel" id="tab-settings" hidden>
+            <div class="settings-grid">
+              <div class="card">
+                <div class="card-head">
+                  <h2 class="card-title" data-i18n="views.gallery.settings.connectionSection">连接与认证</h2>
+                  <span class="subtle" id="settings-token-state"></span>
+                </div>
+
+                <div class="field">
+                  <label for="set-base" data-i18n="views.gallery.settings.baseUrl">图床站点地址</label>
+                  <input id="set-base" type="url" spellcheck="false" placeholder="https://imgapi.bixygames.com" />
+                  <p class="hint" data-i18n="views.gallery.settings.baseUrlHint">
+                    留空时不会发起请求；填写你的 img-api 地址，例如 https://imgapi.bixygames.com。
+                  </p>
+                  <div class="docs-row">
+                    <span class="subtle" data-i18n="views.gallery.settings.docsLabel">接口文档</span>
+                    <a
+                      class="docs-link"
+                      id="docs-link"
+                      href="https://imgapi.bixygames.com/docs"
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >https://imgapi.bixygames.com/docs</a>
+                    <button class="link-action" id="copy-docs-inline" type="button" data-i18n="views.gallery.settings.copyDocs">
+                      复制
+                    </button>
+                  </div>
+                </div>
+
+                <div class="field">
+                  <label for="set-token" data-i18n="views.gallery.settings.token">API Token</label>
+                  <input
+                    id="set-token"
+                    type="password"
+                    autocomplete="new-password"
+                    spellcheck="false"
+                    data-i18n-placeholder="views.gallery.settings.tokenPlaceholder"
+                    placeholder="留空保持现有 Token 不变"
+                  />
+                  <p class="hint" data-i18n="views.gallery.settings.tokenHint">
+                    Token 只保存在插件配置中，不会回显完整内容；PNG、原图、非公开列表和更高限流都需要它。
+                  </p>
+                  <label class="check">
+                    <input id="set-clear" type="checkbox" />
+                    <span data-i18n="views.gallery.settings.clearToken">清除已保存的 Token</span>
+                  </label>
+                </div>
+
+                <div class="field">
+                  <label for="set-token-mode" data-i18n="views.gallery.settings.tokenMode">Token 传递方式</label>
+                  <select id="set-token-mode">
+                    <option value="query" data-i18n="views.gallery.settings.tokenModeQuery">
+                      URL 参数（?token=）
+                    </option>
+                    <option value="header" data-i18n="views.gallery.settings.tokenModeHeader">
+                      Authorization 请求头
+                    </option>
+                    <option value="both" data-i18n="views.gallery.settings.tokenModeBoth">
+                      两者都带
+                    </option>
+                  </select>
+                  <p class="hint" data-i18n="views.gallery.settings.tokenModeHint">
+                    默认按 /api/v1?token=xxx 调用；URL 参数可能被日志或代理记录，站点支持时建议改用请求头。
+                  </p>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-head">
+                  <h2 class="card-title" data-i18n="views.gallery.settings.behaviorSection">默认行为</h2>
+                </div>
+
+                <div class="field-row">
+                  <div class="field">
+                    <label for="set-gallery" data-i18n="views.gallery.settings.defaultGallery">默认图库</label>
+                    <select id="set-gallery">
+                      <option value="v1" data-i18n="views.gallery.gallery.v1">V1 全部图库</option>
+                      <option value="v2" data-i18n="views.gallery.gallery.v2">V2 接口图库</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="set-type" data-i18n="views.gallery.settings.defaultType">默认格式</label>
+                    <select id="set-type">
+                      <option value="webp" data-i18n="views.gallery.type.webp">WebP</option>
+                      <option value="png" data-i18n="views.gallery.type.png">PNG</option>
+                      <option value="origin" data-i18n="views.gallery.type.origin">原图</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <div class="field">
+                    <label for="set-tag-mode" data-i18n="views.gallery.settings.tagMode">默认匹配方式</label>
+                    <select id="set-tag-mode">
+                      <option value="any" data-i18n="views.gallery.tagMode.any">任意匹配</option>
+                      <option value="all" data-i18n="views.gallery.tagMode.all">全部匹配</option>
+                    </select>
+                  </div>
+                  <div class="field">
+                    <label for="set-send-mode" data-i18n="views.gallery.settings.sendMode">聊天发送方式</label>
+                    <select id="set-send-mode">
+                      <option value="bytes" data-i18n="views.gallery.settings.sendModeBytes">下载后发送</option>
+                      <option value="url" data-i18n="views.gallery.settings.sendModeUrl">直接发送链接</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <label class="check">
+                    <input id="set-show-meta" type="checkbox" />
+                    <span data-i18n="views.gallery.settings.showMeta">图片附带信息</span>
+                  </label>
+                  <label class="check">
+                    <input id="set-allow-origin" type="checkbox" />
+                    <span data-i18n="views.gallery.settings.allowOrigin">允许请求原图</span>
+                  </label>
+                </div>
+
+                <div class="field-row">
+                  <div class="field">
+                    <label for="set-exclude-tags" data-i18n="views.gallery.settings.excludeTags">
+                      随机图排除标签
+                    </label>
+                    <input id="set-exclude-tags" type="text" placeholder="avatar" />
+                  </div>
+                  <div class="field">
+                    <label for="set-exclude-retries" data-i18n="views.gallery.settings.excludeRetries">
+                      排除重试次数
+                    </label>
+                    <input id="set-exclude-retries" type="number" min="1" max="10" step="1" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="card">
+                <div class="card-head">
+                  <h2 class="card-title" data-i18n="views.gallery.settings.limitsSection">性能与限制</h2>
+                </div>
+
+                <div class="field-row three">
+                  <div class="field">
+                    <label for="set-timeout" data-i18n="views.gallery.settings.timeout">超时（秒）</label>
+                    <input id="set-timeout" type="number" min="3" max="120" step="1" />
+                  </div>
+                  <div class="field">
+                    <label for="set-retry" data-i18n="views.gallery.settings.retry">重试次数</label>
+                    <input id="set-retry" type="number" min="0" max="3" step="1" />
+                  </div>
+                  <div class="field">
+                    <label for="set-max-image" data-i18n="views.gallery.settings.maxImage">图片上限（MB）</label>
+                    <input id="set-max-image" type="number" min="1" max="64" step="1" />
+                  </div>
+                </div>
+
+                <div class="field-row three">
+                  <div class="field">
+                    <label for="set-cooldown" data-i18n="views.gallery.settings.cooldown">随机图冷却（秒）</label>
+                    <input id="set-cooldown" type="number" min="0" max="600" step="1" />
+                  </div>
+                  <div class="field">
+                    <label for="set-cache" data-i18n="views.gallery.settings.cache">统计缓存（秒）</label>
+                    <input id="set-cache" type="number" min="0" max="3600" step="10" />
+                  </div>
+                  <div class="field">
+                    <label for="set-max-tags" data-i18n="views.gallery.settings.maxTags">最多标签数</label>
+                    <input id="set-max-tags" type="number" min="1" max="10" step="1" />
+                  </div>
+                </div>
+
+                <div class="field-row">
+                  <div class="field">
+                    <label for="set-webui-page" data-i18n="views.gallery.settings.webuiPage">面板每页数量</label>
+                    <input id="set-webui-page" type="number" min="6" max="60" step="6" />
+                  </div>
+                  <div class="field">
+                    <label for="set-command-page" data-i18n="views.gallery.settings.commandPage">指令每页数量</label>
+                    <input id="set-command-page" type="number" min="1" max="20" step="1" />
+                  </div>
+                </div>
+              </div>
+
+              <div class="settings-actions">
+                <button class="btn primary" id="save-settings" type="button" data-i18n="views.gallery.settings.save">
+                  保存设置
+                </button>
+                <button class="btn" id="test-connection" type="button" data-i18n="views.gallery.settings.test">
+                  测试连接
+                </button>
+                <span class="subtle" id="settings-status"></span>
+              </div>
+            </div>
+          </section>
+
+          <!-- ---------------------------------------------------------- -->
+          <!-- 关于 -->
+          <!-- ---------------------------------------------------------- -->
+          <section class="panel" id="tab-about" hidden>
+            <div class="settings-grid">
+              <div class="card about-card">
+                <h2 class="card-title" data-i18n="views.gallery.about.title">关于</h2>
+                <p data-i18n="views.gallery.about.desc">
+                  本插件接入梦星的小图床公开 API，提供随机图、图库浏览、图片详情、统计与头像能力。
+                </p>
+                <ul class="feature-list">
+                  <li data-i18n="views.gallery.about.f1">聊天指令：/随机图、/图库列表、/图库信息、/图库统计 等。</li>
+                  <li data-i18n="views.gallery.about.f2">支持 V1 / V2 图库、标签筛选、WebP / PNG / 原图输出。</li>
+                  <li data-i18n="views.gallery.about.f3">Token 仅用于服务端请求，不会拼接到公开链接中。</li>
+                  <li data-i18n="views.gallery.about.f4">配置与 AstrBot 插件配置面板共用同一份数据。</li>
+                </ul>
+                <p class="hint" data-i18n="views.gallery.about.unofficial">
+                  本插件为社区作品，与图床站点无隶属关系；请遵守站点使用规则与速率限制。
+                </p>
+              </div>
+
+              <div class="card about-card">
+                <div class="card-head">
+                  <h2 class="card-title" data-i18n="views.gallery.about.siteInfo">站点信息</h2>
+                  <span class="subtle">img-api</span>
+                </div>
+                <div class="kv">
+                  <span data-i18n="views.gallery.about.site">站点</span>
+                  <code id="about-base">-</code>
+                </div>
+                <div class="kv">
+                  <span data-i18n="views.gallery.about.version">插件版本</span>
+                  <code id="about-version">-</code>
+                </div>
+                <div class="form-actions">
+                  <button class="btn" id="copy-docs" type="button" data-i18n="views.gallery.about.copyDocs">
+                    复制 API 文档地址
+                  </button>
+                  <button class="btn" id="copy-profile" type="button" data-i18n="views.gallery.about.copyProfile">
+                    复制 Token 管理地址
+                  </button>
+                </div>
+              </div>
+            </div>
+          </section>
+        </main>
+      </div>
+    </div>
+
+    <div class="toast" id="toast" hidden></div>
+
+    <div class="modal-backdrop" id="modal" hidden>
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <h2 id="modal-title">详情</h2>
+          <button class="icon-btn" id="modal-close" type="button" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body" id="modal-body"></div>
+      </div>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
