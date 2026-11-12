@@ -2,7 +2,7 @@ name: astrbot_plugin_img_api
 display_name: 星屿图集
 short_desc: 随机图、图库浏览与可视化面板，接入你的 img-api 图床。
 desc: 接入兼容 img-api 的图床服务（接口文档：https://imgapi.bixygames.com/docs），支持随机图、图库、图片详情、统计与头像；安装后需在插件配置中填写你的图床 API 地址。
-version: 1.0.2
+version: 1.0.0
 author: bixygames-community
 repo: https://github.com/Shou-Lu/imager-tool
 astrbot_version: ">=4.26.0,<5"
