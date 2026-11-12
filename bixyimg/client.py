@@ -1,7 +1,7 @@
 """Async HTTP client for the 梦星的小图床 (img-api) public API.
 
-The client is deliberately framework agnostic so it can also be exercised by
-``tests/smoke_api.py`` without a running AstrBot instance.
+The client is deliberately framework agnostic so it can be exercised without a
+running AstrBot instance.
 
 API reference: https://imgapi.bixygames.com/docs
 """

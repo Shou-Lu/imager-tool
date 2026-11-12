@@ -62,7 +62,7 @@ https://imgapi.bixygames.com/api/v1
 4. 打开插件配置，填写 `base_url`（默认留空，必填）；需要 PNG/原图/非公开列表时再填写 `token`。
 5. 在插件卡片中进入「图库面板」即可使用 WebUI。
 
-> 通过 Dashboard 上传 ZIP 时，`metadata.yaml` 必须位于压缩包根目录，不能多套一层 `astrbot_plugin_img_api/` 文件夹，也不能用反斜杠路径。运行 `python tools/package.py` 会生成符合 AstrBot 要求的 `dist/astrbot_plugin_img_api.zip`；如果自己打包，请使用正斜杠条目并让 `metadata.yaml` 位于根目录。
+> 通过 Dashboard 上传 ZIP 时，`metadata.yaml` 必须位于压缩包根目录，不能多套一层 `astrbot_plugin_img_api/` 文件夹，也不能用反斜杠路径。本仓库源码已经是扁平结构，直接打包根目录内容即可；`metadata.yaml` 必须位于 ZIP 根目录。
 
 使用我提供的站点时，Token 创建入口：`https://imgapi.bixygames.com/admin/profile` → 「API Token」→「创建 Token」。
 自建实例请使用 `{base_url}/admin/profile`。
@@ -197,28 +197,11 @@ GET https://imgapi.bixygames.com/api/v1?id=<IMAGE_ID>&type=origin&token=xxx
 - URL 参数可能被上游、代理或调试日志记录；如果站点支持请求头，建议设置 `token_mode=header`。
 - 如果 Token 泄漏：到图床个人中心吊销并重新创建，然后更新插件配置。
 
-## 开发与测试
+## 开发
 
 ```bash
-# Token 传递方式、URL 去 token、头像排除的单元测试（不联网）
-python tests/unit_client.py
-
-# 纯 API 客户端冒烟测试（会访问线上图床）
-python tests/smoke_api.py
-
-# 带 AstrBot 桩的插件级测试（指令 + Web API，会访问线上图床）
-python tests/smoke_plugin.py
-
-# 可选：用真实 Token 测试原图与非公开列表
-# PowerShell: $env:BIXY_TOKEN="img_xxx"; python tests/smoke_api.py
-BIXY_TOKEN=img_xxx python tests/smoke_api.py
-
-# 代码检查与格式化
 ruff check .
 ruff format --check .
-
-# 打包为 AstrBot 可安装的扁平 ZIP（输出到 dist/）
-python tools/package.py
 ```
 
 目录结构：
@@ -231,23 +214,19 @@ astrbot_plugin_img_api/
 ├── requirements.txt
 ├── logo.png
 ├── pyproject.toml              # ruff 配置
-├── CHANGELOG.md
+├── README.md
+├── LICENSE                     # AGPL-3.0
+├── .gitignore
 ├── bixyimg/
 │   ├── client.py               # img-api 异步客户端
 │   └── util.py                 # 参数解析、格式化、错误提示
-├── pages/gallery/              # 插件可视化视图（AstrBot 4.26+ 均支持）
-│   ├── index.html
-│   ├── app.js
-│   └── style.css
 ├── .astrbot-plugin/i18n/       # 中英文文案
 │   ├── zh-CN.json
 │   └── en-US.json
-├── tools/
-│   └── package.py              # 生成扁平 AstrBot ZIP
-└── tests/
-    ├── unit_client.py
-    ├── smoke_api.py
-    └── smoke_plugin.py
+└── pages/gallery/              # 插件可视化视图（AstrBot 4.26+ 均支持）
+    ├── index.html
+    ├── app.js
+    └── style.css
 ```
 
 ## 常见问题
@@ -293,4 +272,6 @@ WebUI 保存会立即重建客户端；如果修改的是 AstrBot 插件配置�
 
 ## 许可
 
-MIT，详见 [LICENSE](LICENSE)。
+本项目使用 **GNU Affero General Public License v3.0（AGPL-3.0）**。详见 [LICENSE](LICENSE)。
+
+如果你通过网络向用户提供本插件的修改版本，请按 AGPL-3.0 的要求提供对应源码。
