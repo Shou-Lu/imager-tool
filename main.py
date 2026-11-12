@@ -70,11 +70,12 @@ except ImportError:  # pragma: no cover - only used outside a package context
     )
 
 PLUGIN_NAME = "astrbot_plugin_img_api"
-PLUGIN_VERSION = "1.0.1"
+PLUGIN_VERSION = "1.0.2"
 DOCS_URL = "https://imgapi.bixygames.com/docs"
 
 RANDOM_COMMAND_NAMES = ("随机图", "来张图", "img", "pic", "randimg")
 LIST_COMMAND_NAMES = ("图库列表", "图库", "imglib")
+SEARCH_COMMAND_NAMES = ("图库搜索", "搜索图片", "imgsearch")
 INFO_COMMAND_NAMES = ("图库信息", "图片信息")
 AVATAR_COMMAND_NAMES = ("图库头像", "图片头像")
 
@@ -728,6 +729,26 @@ class BixyImgPlugin(Star):
             }
         return 0.0
 
+    def _format_gallery_items(
+        self,
+        items: list[dict[str, Any]],
+        total: int,
+        page: int,
+        page_size: int,
+        heading: str = "图库列表",
+    ) -> list[str]:
+        lines = [f"📚 {heading} · 第 {page} 页 · 共 {total} 张"]
+        for item in items[:page_size]:
+            pieces = [f"• {item['id']}"]
+            if item["title"]:
+                pieces.append(item["title"])
+            if item["width"] and item["height"]:
+                pieces.append(f"{item['width']}×{item['height']}")
+            if item["tags"]:
+                pieces.append(" ".join(f"#{tag}" for tag in item["tags"][:3]))
+            lines.append("  ".join(pieces))
+        return lines
+
     # ------------------------------------------------------------------
     # Chat commands
     # ------------------------------------------------------------------
@@ -836,17 +857,9 @@ class BixyImgPlugin(Star):
                 yield event.plain_result("📭 这一页没有图片。")
                 return
 
-            lines = [f"📚 图库列表 · 第 {page} 页 · 共 {total} 张"]
-            for item in items[:page_size]:
-                pieces = [f"• {item['id']}"]
-                if item["title"]:
-                    pieces.append(item["title"])
-                if item["width"] and item["height"]:
-                    pieces.append(f"{item['width']}×{item['height']}")
-                if item["tags"]:
-                    pieces.append(" ".join(f"#{tag}" for tag in item["tags"][:3]))
-                lines.append("  ".join(pieces))
-
+            lines = self._format_gallery_items(
+                items, total, page, page_size, "图库列表"
+            )
             has_next = page * page_size < total if total else len(items) >= page_size
             if has_next:
                 suffix = f" {tags}" if tags else ""
@@ -857,6 +870,33 @@ class BixyImgPlugin(Star):
         except Exception:
             self.logger.exception("图库列表指令执行失败")
             yield event.plain_result("❌ 读取图库失败，请查看 AstrBot 日志。")
+
+    @filter.command("图库搜索", alias={"搜索图片", "imgsearch"})
+    async def search_images_cmd(self, event: AstrMessageEvent):
+        """按关键词搜索图库。用法: /图库搜索 <关键词>"""
+        query = self._command_args(event, *SEARCH_COMMAND_NAMES).strip()
+        if not query:
+            yield event.plain_result("用法: /图库搜索 <关键词>")
+            return
+
+        page_size = self._cfg_int("command_page_size", 8, 1, 20)
+        try:
+            payload = await self._client.list_images(
+                page=1,
+                page_size=page_size,
+                query=query,
+            )
+            items, total = normalize_list_payload(payload, self._client.site_url)
+            if not items:
+                yield event.plain_result("📭 没有找到匹配的图片。")
+                return
+            lines = self._format_gallery_items(items, total, 1, page_size, "图库搜索")
+            yield event.plain_result("\n".join(lines))
+        except (ImgApiError, ValueError) as exc:
+            yield event.plain_result(f"❌ {friendly_error(exc)}")
+        except Exception:
+            self.logger.exception("图库搜索指令执行失败")
+            yield event.plain_result("❌ 搜索图库失败，请查看 AstrBot 日志。")
 
     @filter.command("图库统计", alias={"图库状态"})
     async def stats_cmd(self, event: AstrMessageEvent):
@@ -1011,11 +1051,11 @@ class BixyImgPlugin(Star):
             self.logger.exception("图库头像指令执行失败")
             yield event.plain_result("❌ 获取头像失败，请查看 AstrBot 日志。")
 
-    @filter.command("图库帮助", alias={"图库菜单", "imghelp"})
+    @filter.command("图库帮助", alias={"图库菜单", "imghelp", "图库指令"})
     async def help_cmd(self, event: AstrMessageEvent):
-        """查看梦星小图床插件的指令帮助。"""
+        """查看星屿图集插件的指令帮助。"""
         lines = [
-            "🖼️ 梦星小图床插件",
+            "🖼️ 星屿图集（梦星小图床）",
             "",
             "随机图:",
             "  /随机图 [标签] [v1|v2] [webp|png|origin] [any|all]",
@@ -1024,17 +1064,253 @@ class BixyImgPlugin(Star):
             "",
             "图库:",
             "  /图库列表 [页码] [标签]",
+            "  /图库搜索 <关键词>",
             "  /图库信息 <图片ID>",
             "  /图库统计",
             "  /图库标签",
             "  /图库头像 [用户名] [png] [尺寸]",
             "",
+            "AI 工具（由模型自动调用）:",
+            "  随机图 / 图库搜索 / 图库统计 / 图片详情 / 用户头像",
+            "",
             "提示:",
-            "  · 原图（origin）需要先在插件配置中填写 Token。",
+            "  · 原图（origin）和 PNG 需要先在插件配置中填写 Token。",
             "  · V2 图库只包含已加入 V2 的图片，可能与 V1 数量不同。",
             "  · 更多设置请打开 AstrBot 插件页中的「图库面板」。",
         ]
         yield event.plain_result("\n".join(lines))
+
+    # ------------------------------------------------------------------
+    # LLM tools (function calling)
+    # ------------------------------------------------------------------
+    @filter.llm_tool(name="imgapi_random_image")
+    async def llm_random_image(
+        self,
+        event: AstrMessageEvent,
+        tag: str = "",
+        gallery: str = "",
+        image_type: str = "",
+        image_id: str = "",
+    ) -> str:
+        """从图床随机获取一张图片并直接发送给用户。
+
+        Args:
+            tag(string): 可选标签，多个标签用英文逗号分隔，例如 dragon,fish。
+            gallery(string): 可选图库，v1 表示全部图库，v2 表示 V2 接口图库。
+            image_type(string): 可选输出格式，webp、png 或 origin。
+            image_id(string): 可选图片 ID，填写后直接获取指定图片。
+        """
+        if not self._client.site_url:
+            return "尚未配置图床 API 地址，请先在插件设置中填写。"
+        try:
+            gallery_value = str(gallery).strip().lower()
+            if gallery_value not in ("v1", "v2"):
+                gallery_value = self._default_gallery()
+            type_value = str(image_type).strip().lower()
+            if type_value not in ("webp", "png", "origin"):
+                type_value = self._default_type()
+            if type_value in ("png", "origin"):
+                self._require_format(type_value)
+
+            wait = self._cooldown_remaining(event)
+            if wait > 0:
+                return f"请稍等 {wait:.1f} 秒后再请求随机图。"
+
+            tag_value = sanitize_tags(tag, max_tags=self._max_tags())
+            image_id_value = sanitize_image_id(image_id)
+            image = await self._client.random_image(
+                gallery_value,
+                image_id=image_id_value or None,
+                tag=tag_value or None,
+                tag_mode=self._default_tag_mode(),
+                image_type=type_value,
+                exclude_tags=self._exclude_tags(),
+                max_attempts=self._exclude_retries(),
+            )
+            if type_value == "png" and str(image.get("variant") or "").lower() != "png":
+                return "图床没有返回 PNG，请检查 Token 是否有效。"
+            if type_value == "origin" and not image.get("origin"):
+                return "图床没有返回原图，请检查 Token 是否有效。"
+
+            data, _ = await self._fetch_selected(image, type_value)
+            components: list[Any] = []
+            if self._cfg_bool("show_meta", True):
+                components.append(Comp.Plain(build_caption(image, gallery_value)))
+            components.append(Comp.Image.fromBytes(data))
+            await event.send(event.chain_result(components))
+
+            tags = ", ".join(tags_of(image)) or "无"
+            return (
+                f"已发送图片 id={image.get('id')}，"
+                f"格式={image.get('variant') or type_value}，标签={tags}。"
+            )
+        except (ImgApiError, ValueError) as exc:
+            return f"获取图片失败：{friendly_error(exc)}"
+        except Exception:
+            self.logger.exception("LLM 随机图工具执行失败")
+            return "获取图片失败，请稍后再试。"
+
+    @filter.llm_tool(name="imgapi_search_gallery")
+    async def llm_search_gallery(
+        self,
+        event: AstrMessageEvent,
+        query: str = "",
+        tag: str = "",
+        page: int = 1,
+    ) -> str:
+        """搜索图库并返回匹配的图片列表。
+
+        Args:
+            query(string): 搜索关键词，匹配标题、来源或标签。
+            tag(string): 可选标签筛选，多个标签用英文逗号分隔。
+            page(number): 页码，从 1 开始。
+        """
+        if not self._client.site_url:
+            return "尚未配置图床 API 地址，请先在插件设置中填写。"
+        query_value = str(query).strip()[:100]
+        tag_value = sanitize_tags(tag, max_tags=self._max_tags())
+        if not query_value and not tag_value:
+            return "请提供搜索关键词或标签。"
+
+        page_value = clamp_int(page, 1, 1000, 1)
+        page_size = min(self._cfg_int("command_page_size", 8, 1, 20), 10)
+        try:
+            payload = await self._client.list_images(
+                page=page_value,
+                page_size=page_size,
+                query=query_value or None,
+                tag=tag_value or None,
+                tag_mode=self._default_tag_mode(),
+            )
+            items, total = normalize_list_payload(payload, self._client.site_url)
+            if not items:
+                return "没有找到匹配的图片。"
+            return "\n".join(
+                self._format_gallery_items(
+                    items, total, page_value, page_size, "图库搜索"
+                )
+            )
+        except (ImgApiError, ValueError) as exc:
+            return f"搜索图库失败：{friendly_error(exc)}"
+        except Exception:
+            self.logger.exception("LLM 图库搜索工具执行失败")
+            return "搜索图库失败，请稍后再试。"
+
+    @filter.llm_tool(name="imgapi_gallery_stats")
+    async def llm_gallery_stats(self, event: AstrMessageEvent) -> str:
+        """获取图库统计信息，包括图片数量、大小、标签和站点状态。"""
+        if not self._client.site_url:
+            return "尚未配置图床 API 地址，请先在插件设置中填写。"
+        try:
+            site = await self._get_stats(force=True)
+            lines = [f"🏷️ {site.get('siteName') or '图床'} 统计"]
+            lines.append(f"🖼️ 图片总数: {site.get('count', '-')}")
+            if site.get("totalSize") is not None:
+                size_line = f"💾 总大小: {format_bytes(site['totalSize'])}"
+                if site.get("webpSize") is not None:
+                    size_line += f"（WebP {format_bytes(site['webpSize'])}）"
+                lines.append(size_line)
+            tags = site.get("tags") or []
+            lines.append(
+                "🏷️ 标签: "
+                + ("、".join(str(tag) for tag in tags[:20]) if tags else "暂无")
+            )
+            if site.get("newest"):
+                lines.append(f"🕒 最新图片: {format_datetime(site['newest'])}")
+            try:
+                health = await self._get_health(force=True)
+                lines.append(
+                    "✅ 服务状态: 正常" if health.get("ok") else "⚠️ 服务状态: 异常"
+                )
+            except Exception:
+                lines.append("⚠️ 服务状态: 无法获取")
+            return "\n".join(lines)
+        except (ImgApiError, ValueError) as exc:
+            return f"读取统计失败：{friendly_error(exc)}"
+        except Exception:
+            self.logger.exception("LLM 图库统计工具执行失败")
+            return "读取统计失败，请稍后再试。"
+
+    @filter.llm_tool(name="imgapi_image_info")
+    async def llm_image_info(
+        self,
+        event: AstrMessageEvent,
+        image_id: str = "",
+    ) -> str:
+        """根据图片 ID 获取图片详细信息。
+
+        Args:
+            image_id(string): 图片 ID。
+        """
+        if not self._client.site_url:
+            return "尚未配置图床 API 地址，请先在插件设置中填写。"
+        image_id_value = sanitize_image_id(image_id)
+        if not image_id_value:
+            return "请提供图片 ID。"
+        try:
+            info = await self._client.info(image_id_value)
+        except (ImgApiError, ValueError) as exc:
+            return f"读取图片信息失败：{friendly_error(exc)}"
+        except Exception:
+            self.logger.exception("LLM 图片详情工具执行失败")
+            return "读取图片信息失败，请稍后再试。"
+
+        lines = [f"🖼️ {info.get('title') or '图片详情'}"]
+        lines.append(f"ID: {info.get('id')}")
+        if info.get("width") and info.get("height"):
+            lines.append(f"尺寸: {info['width']}×{info['height']}")
+        if info.get("size") is not None:
+            lines.append(f"大小: {format_bytes(info['size'])}")
+        tags = tags_of(info)
+        if tags:
+            lines.append("标签: " + " ".join(f"#{tag}" for tag in tags))
+        if info.get("source"):
+            lines.append(f"来源: {info['source']}")
+        if info.get("status"):
+            lines.append(f"状态: {info['status']}")
+        if info.get("createdAt"):
+            lines.append(f"上传时间: {format_datetime(info['createdAt'])}")
+        if info.get("url"):
+            lines.append(f"直链: {info['url']}")
+        if info.get("apiUrl"):
+            lines.append(f"API: {info['apiUrl']}")
+        return "\n".join(lines)
+
+    @filter.llm_tool(name="imgapi_user_avatar")
+    async def llm_user_avatar(
+        self,
+        event: AstrMessageEvent,
+        user: str = "",
+        size: int = 512,
+        image_type: str = "jpg",
+    ) -> str:
+        """获取图床用户头像并发送给用户。
+
+        Args:
+            user(string): 可选用户名；留空时使用 Token 用户或站长头像。
+            size(number): 头像尺寸，32 到 1024，默认 512。
+            image_type(string): 头像格式，jpg 或 png。
+        """
+        if not self._client.site_url:
+            return "尚未配置图床 API 地址，请先在插件设置中填写。"
+        try:
+            user_value = str(user).strip()[:64]
+            type_value = str(image_type).strip().lower()
+            if type_value not in ("jpg", "png"):
+                type_value = "jpg"
+            url = self._client.avatar_url(
+                user=user_value or None,
+                image_type=type_value,
+                size=clamp_int(size, 32, 1024, 512),
+            )
+            data, _ = await self._client.fetch_bytes(url)
+            await event.send(event.chain_result([Comp.Image.fromBytes(data)]))
+            return f"已发送 {user_value or '当前用户/站长'} 的头像。"
+        except (ImgApiError, ValueError) as exc:
+            return f"获取头像失败：{friendly_error(exc)}"
+        except Exception:
+            self.logger.exception("LLM 头像工具执行失败")
+            return "获取头像失败，请稍后再试。"
 
     async def terminate(self):
         """插件卸载/停用时关闭 HTTP 连接池。"""

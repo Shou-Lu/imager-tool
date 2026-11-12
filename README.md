@@ -24,6 +24,8 @@ https://imgapi.bixygames.com/api/v1
 ## 功能
 
 - **随机图**：支持 V1 / V2 图库、单标签/多标签、`any`/`all` 匹配、WebP / PNG / 原图输出（PNG 与原图需 Token）。
+- **AI 工具**：内置随机图、图库搜索、图库统计、图片详情、用户头像 5 个 LLM function-calling 工具，可由模型自动调用。
+- **平台适配**：支持 aiocqhttp、QQ 官方、Telegram、微信、飞书、Discord、Slack、KOOK、Satori 等主流图片平台。
 - **头像排除**：随机图默认跳过 `#avatar` 标签的图片，避免把头像图当作随机图调用。
 - **图库浏览**：分页列表、搜索、标签筛选、图片详情与统计。
 - **WebUI 面板**：仿梦星小图床后台的侧栏面板与深色配色，支持亮/暗主题切换、随机图预览、图库网格、一键复制链接/Markdown/ID、原图查看与下载、连接测试、在线修改配置。
@@ -74,11 +76,31 @@ Token 只在创建弹窗显示一次，请立即保存。
 | --- | --- | --- |
 | `/随机图` | `/来张图`、`/img`、`/pic`、`/randimg` | 随机获取一张图片 |
 | `/图库列表` | `/图库`、`/imglib` | 分页浏览图库 |
+| `/图库搜索 <关键词>` | `/搜索图片`、`/imgsearch` | 按标题、来源或标签搜索图库 |
 | `/图库信息 <ID>` | `/图片信息` | 查看单张图片详情 |
 | `/图库统计` | `/图库状态` | 查看图片总数、大小、标签与站点状态 |
 | `/图库标签` | `/图库标签列表` | 列出图库标签 |
 | `/图库头像 [用户名] [png] [尺寸]` | `/图片头像` | 获取用户头像；不填用户名时使用 Token 用户/站长头像 |
-| `/图库帮助` | `/图库菜单`、`/imghelp` | 查看帮助 |
+| `/图库帮助` | `/图库菜单`、`/imghelp`、`/图库指令` | 查看帮助 |
+
+## AI 工具
+
+插件注册了 5 个 LLM function-calling 工具，模型可在对话中自动调用：
+
+| 工具 | 用途 |
+| --- | --- |
+| `imgapi_random_image` | 随机获取并发送一张图片，支持标签、V1/V2、WebP/PNG/原图 |
+| `imgapi_search_gallery` | 按关键词或标签搜索图库，返回图片列表 |
+| `imgapi_gallery_stats` | 获取图片数量、大小、标签和站点状态 |
+| `imgapi_image_info` | 根据图片 ID 返回详情 |
+| `imgapi_user_avatar` | 获取并发送用户头像 |
+
+工具与 `/随机图`、`/图库搜索`、`/图库统计`、`/图库信息`、`/图库头像` 共用同一套配置、Token、排除标签和错误处理。
+
+## 支持平台与标签
+
+- **平台**：`aiocqhttp`、`qq_official`、`qq_official_webhook`、`telegram`、`wecom`、`wecom_ai_bot`、`lark`、`dingtalk`、`discord`、`slack`、`kook`、`vocechat`、`weixin_official_account`、`weixin_oc`、`satori`、`misskey`、`line`、`matrix`、`mattermost`
+- **标签**：`图片`、`随机图`、`图库`、`图床`、`img-api`、`壁纸`
 
 ### 随机图参数
 
