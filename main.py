@@ -75,7 +75,7 @@ except ImportError:  # pragma: no cover - only used outside a package context
     )
 
 PLUGIN_NAME = "astrbot_plugin_img_api"
-PLUGIN_VERSION = "1.0.0"
+PLUGIN_VERSION = "1.0.3"
 DOCS_URL = "https://imgapi.bixygames.com/docs"
 
 RANDOM_COMMAND_NAMES = ("随机图", "来张图", "img", "pic", "randimg")
