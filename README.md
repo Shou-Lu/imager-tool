@@ -24,7 +24,7 @@ https://imgapi.bixygames.com/api/v1
 ## 功能
 
 - **随机图**：支持 V1 / V2 图库、单标签/多标签、`any`/`all` 匹配、WebP / PNG / 原图输出（PNG 与原图需 Token）。
-- **AI 工具**：内置随机图、图库搜索、图库统计、图片详情、用户头像 5 个 LLM function-calling 工具，可由模型自动调用。
+- **AI 工具**：内置随机图、AI 自选随机图、图库搜索、图库统计、图片详情、用户头像 6 个 LLM function-calling 工具，可由模型自动调用；AI 自选随机图可在配置中关闭（默认开启）。
 - **平台适配**：支持 aiocqhttp、QQ 官方、Telegram、微信、飞书、Discord、Slack、KOOK、Satori 等主流图片平台。
 - **头像排除**：随机图默认跳过 `#avatar` 标签的图片，避免把头像图当作随机图调用。
 - **图库浏览**：分页列表、搜索、标签筛选、图片详情与统计。
@@ -85,11 +85,12 @@ Token 只在创建弹窗显示一次，请立即保存。
 
 ## AI 工具
 
-插件注册了 5 个 LLM function-calling 工具，模型可在对话中自动调用：
+插件注册了 6 个 LLM function-calling 工具，模型可在对话中自动调用：
 
 | 工具 | 用途 |
 | --- | --- |
 | `imgapi_random_image` | 随机获取并发送一张图片，支持标签、V1/V2、WebP/PNG/原图 |
+| `imgapi_ai_random_image` | AI 自选随机图：模型给出候选标签，插件从中随机选一个再发图；可在配置中关闭 |
 | `imgapi_search_gallery` | 按关键词或标签搜索图库，返回图片列表 |
 | `imgapi_gallery_stats` | 获取图片数量、大小、标签和站点状态 |
 | `imgapi_image_info` | 根据图片 ID 返回详情 |
@@ -148,6 +149,7 @@ Token 只在创建弹窗显示一次，请立即保存。
 | `tag_mode` | `any` | 多标签匹配：`any` / `all` |
 | `send_mode` | `bytes` | 聊天发送方式：`bytes` / `url` |
 | `allow_origin` | `true` | 关闭后原图不可用 |
+| `enable_ai_pick` | `true` | 启用 `imgapi_ai_random_image`（AI 自选标签后随机发图）；关闭后该工具从模型工具列表中隐藏 |
 | `show_meta` | `true` | 在图片消息前附带图库、尺寸、标签、ID |
 | `exclude_tags` | `["avatar"]` | 随机图排除的标签；默认跳过 `#avatar` |
 | `exclude_retries` | `5` | 命中排除标签后的重抽次数，1–10 |

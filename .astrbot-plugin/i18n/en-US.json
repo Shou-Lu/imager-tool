@@ -67,6 +67,10 @@
       "description": "Allow origin images",
       "hint": "When disabled, origin images are unavailable; WebP/PNG are unaffected. Origin requires a token and is larger."
     },
+    "enable_ai_pick": {
+      "description": "Enable AI-picked random images",
+      "hint": "Registers imgapi_ai_random_image: the model proposes candidate tags and the plugin randomly picks one before sending an image. When disabled, the tool replies that the feature is off."
+    },
     "show_meta": {
       "description": "Attach image information",
       "hint": "Adds gallery, dimensions, tags and image ID before the image message."
@@ -268,6 +272,7 @@
         "sendModeUrl": "Send URL directly",
         "showMeta": "Attach image information",
         "allowOrigin": "Allow origin requests",
+        "enableAiPick": "Enable AI-picked random images",
         "timeout": "Timeout (s)",
         "retry": "Retries",
         "maxImage": "Image limit (MB)",
@@ -500,6 +505,7 @@
         "sendModeUrl": "Send URL directly",
         "showMeta": "Attach image information",
         "allowOrigin": "Allow origin requests",
+        "enableAiPick": "Enable AI-picked random images",
         "timeout": "Timeout (s)",
         "retry": "Retries",
         "maxImage": "Image limit (MB)",

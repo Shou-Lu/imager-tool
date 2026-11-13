@@ -65,6 +65,12 @@
     "default": true,
     "hint": "关闭后原图不可用；WebP/PNG 不受影响。原图需要 Token，且体积更大。"
   },
+  "enable_ai_pick": {
+    "description": "启用 AI 自选随机图",
+    "type": "bool",
+    "default": true,
+    "hint": "开启后注册 imgapi_ai_random_image 工具：模型可以先给出候选标签，再由插件随机选一个并发送图片；关闭后该工具会直接返回已禁用提示。"
+  },
   "show_meta": {
     "description": "图片附带信息",
     "type": "bool",

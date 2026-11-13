@@ -1404,6 +1404,7 @@ function fillSettings(config) {
   $("#set-exclude-retries").value = config.exclude_retries ?? 5;
   $("#set-show-meta").checked = Boolean(config.show_meta);
   $("#set-allow-origin").checked = Boolean(config.allow_origin);
+  $("#set-enable-ai-pick").checked = config.enable_ai_pick !== false;
   $("#set-timeout").value = config.request_timeout ?? 20;
   $("#set-retry").value = config.retry_times ?? 1;
   $("#set-max-image").value = config.max_image_mb ?? 12;
@@ -1451,6 +1452,7 @@ function collectSettings() {
     exclude_retries: Number($("#set-exclude-retries").value),
     show_meta: $("#set-show-meta").checked,
     allow_origin: $("#set-allow-origin").checked,
+    enable_ai_pick: $("#set-enable-ai-pick").checked,
     request_timeout: Number($("#set-timeout").value),
     retry_times: Number($("#set-retry").value),
     max_image_mb: Number($("#set-max-image").value),
@@ -1615,7 +1617,7 @@ function bindEvents() {
   $("#test-connection")?.addEventListener("click", testConnection);
 
   $$(
-    "#set-base, #set-token, #set-gallery, #set-type, #set-tag-mode, #set-send-mode, #set-token-mode, #set-exclude-tags, #set-exclude-retries, #set-show-meta, #set-allow-origin, #set-timeout, #set-retry, #set-max-image, #set-cooldown, #set-cache, #set-max-tags, #set-webui-page, #set-command-page, #set-clear",
+    "#set-base, #set-token, #set-gallery, #set-type, #set-tag-mode, #set-send-mode, #set-token-mode, #set-exclude-tags, #set-exclude-retries, #set-show-meta, #set-allow-origin, #set-enable-ai-pick, #set-timeout, #set-retry, #set-max-image, #set-cooldown, #set-cache, #set-max-tags, #set-webui-page, #set-command-page, #set-clear",
   ).forEach((element) => {
     element.addEventListener("input", () => {
       state.settingsDirty = true;

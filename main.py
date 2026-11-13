@@ -8,6 +8,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import functools
+import random
 import sys
 import time
 from pathlib import Path
@@ -96,6 +97,7 @@ class BixyImgPlugin(Star):
         # key: unified_msg_origin + sender_id -> monotonic timestamp
         self._cooldowns: dict[str, float] = {}
         self._register_web_apis()
+        self._sync_ai_pick_tool()
 
     # ------------------------------------------------------------------
     # Configuration and client lifecycle
@@ -201,6 +203,18 @@ class BixyImgPlugin(Star):
         """Error text that can never contain the configured token."""
         return redact_secrets(friendly_error(exc), self._client.token)
 
+    def _sync_ai_pick_tool(self) -> None:
+        """Hide/show the AI-pick tool in the LLM tool list without persisting."""
+        manager = getattr(
+            getattr(self.context, "provider_manager", None), "llm_tools", None
+        )
+        get_func = getattr(manager, "get_func", None)
+        if not callable(get_func):
+            return
+        tool = get_func("imgapi_ai_random_image")
+        if tool is not None:
+            tool.active = self._cfg_bool("enable_ai_pick", True)
+
     def _make_client(self) -> ImgApiClient:
         options = {
             "token": self.config.get("token") or "",
@@ -251,6 +265,7 @@ class BixyImgPlugin(Star):
             "cache_ttl": self._cfg_int("cache_ttl", 60, 0, 3600),
             "show_meta": self._cfg_bool("show_meta", True),
             "allow_origin": self._cfg_bool("allow_origin", True),
+            "enable_ai_pick": self._cfg_bool("enable_ai_pick", True),
             "webui_page_size": self._cfg_int("webui_page_size", 24, 6, 60),
             "command_page_size": self._cfg_int("command_page_size", 8, 1, 20),
             "max_tags": self._max_tags(),
@@ -663,7 +678,7 @@ class BixyImgPlugin(Star):
             if isinstance(value, str) and value.lower() in allowed:
                 self.config[key] = value.lower()
 
-        for key in ("show_meta", "allow_origin"):
+        for key in ("show_meta", "allow_origin", "enable_ai_pick"):
             value = payload.get(key)
             if isinstance(value, bool):
                 self.config[key] = value
@@ -724,6 +739,7 @@ class BixyImgPlugin(Star):
             save_sync()
 
         await self._replace_client()
+        self._sync_ai_pick_tool()
         # Audit trail without ever writing the token itself.
         self.logger.info(
             "插件配置已更新: base_url=%s token_mode=%s token_configured=%s",
@@ -1118,7 +1134,7 @@ class BixyImgPlugin(Star):
             "  /图库头像 [用户名] [png] [尺寸]",
             "",
             "AI 工具（由模型自动调用）:",
-            "  随机图 / 图库搜索 / 图库统计 / 图片详情 / 用户头像",
+            "  随机图 / AI 自选随机图 / 图库搜索 / 图库统计 / 图片详情 / 用户头像",
             "",
             "提示:",
             "  · 原图（origin）和 PNG 需要先在插件配置中填写 Token。",
@@ -1130,6 +1146,58 @@ class BixyImgPlugin(Star):
     # ------------------------------------------------------------------
     # LLM tools (function calling)
     # ------------------------------------------------------------------
+    async def _llm_send_random(
+        self,
+        event: AstrMessageEvent,
+        *,
+        gallery: str,
+        image_type: str,
+        tag: str = "",
+        image_id: str = "",
+    ) -> str:
+        """Shared implementation for the LLM random-image tools."""
+        gallery_value = str(gallery).strip().lower()
+        if gallery_value not in ("v1", "v2"):
+            gallery_value = self._default_gallery()
+        type_value = str(image_type).strip().lower()
+        if type_value not in ("webp", "png", "origin"):
+            type_value = self._default_type()
+        if type_value in ("png", "origin"):
+            self._require_format(type_value)
+
+        wait = self._cooldown_remaining(event)
+        if wait > 0:
+            return f"请稍等 {wait:.1f} 秒后再请求随机图。"
+
+        tag_value = sanitize_tags(tag, max_tags=self._max_tags())
+        image_id_value = sanitize_image_id(image_id)
+        image = await self._client.random_image(
+            gallery_value,
+            image_id=image_id_value or None,
+            tag=tag_value or None,
+            tag_mode=self._default_tag_mode(),
+            image_type=type_value,
+            exclude_tags=self._exclude_tags(),
+            max_attempts=self._exclude_retries(),
+        )
+        if type_value == "png" and str(image.get("variant") or "").lower() != "png":
+            return "图床没有返回 PNG，请检查 Token 是否有效。"
+        if type_value == "origin" and not image.get("origin"):
+            return "图床没有返回原图，请检查 Token 是否有效。"
+
+        data, _ = await self._fetch_selected(image, type_value)
+        components: list[Any] = []
+        if self._cfg_bool("show_meta", True):
+            components.append(Comp.Plain(build_caption(image, gallery_value)))
+        components.append(Comp.Image.fromBytes(data))
+        await event.send(event.chain_result(components))
+
+        tags = ", ".join(tags_of(image)) or "无"
+        return (
+            f"已发送图片 id={sanitize_text(image.get('id'), 64)}，"
+            f"格式={image.get('variant') or type_value}，标签={tags}。"
+        )
+
     @filter.llm_tool(name="imgapi_random_image")
     async def llm_random_image(
         self,
@@ -1150,51 +1218,70 @@ class BixyImgPlugin(Star):
         if not self._client.site_url:
             return "尚未配置图床 API 地址，请先在插件设置中填写。"
         try:
-            gallery_value = str(gallery).strip().lower()
-            if gallery_value not in ("v1", "v2"):
-                gallery_value = self._default_gallery()
-            type_value = str(image_type).strip().lower()
-            if type_value not in ("webp", "png", "origin"):
-                type_value = self._default_type()
-            if type_value in ("png", "origin"):
-                self._require_format(type_value)
-
-            wait = self._cooldown_remaining(event)
-            if wait > 0:
-                return f"请稍等 {wait:.1f} 秒后再请求随机图。"
-
-            tag_value = sanitize_tags(tag, max_tags=self._max_tags())
-            image_id_value = sanitize_image_id(image_id)
-            image = await self._client.random_image(
-                gallery_value,
-                image_id=image_id_value or None,
-                tag=tag_value or None,
-                tag_mode=self._default_tag_mode(),
-                image_type=type_value,
-                exclude_tags=self._exclude_tags(),
-                max_attempts=self._exclude_retries(),
-            )
-            if type_value == "png" and str(image.get("variant") or "").lower() != "png":
-                return "图床没有返回 PNG，请检查 Token 是否有效。"
-            if type_value == "origin" and not image.get("origin"):
-                return "图床没有返回原图，请检查 Token 是否有效。"
-
-            data, _ = await self._fetch_selected(image, type_value)
-            components: list[Any] = []
-            if self._cfg_bool("show_meta", True):
-                components.append(Comp.Plain(build_caption(image, gallery_value)))
-            components.append(Comp.Image.fromBytes(data))
-            await event.send(event.chain_result(components))
-
-            tags = ", ".join(tags_of(image)) or "无"
-            return (
-                f"已发送图片 id={image.get('id')}，"
-                f"格式={image.get('variant') or type_value}，标签={tags}。"
+            return await self._llm_send_random(
+                event,
+                gallery=gallery,
+                image_type=image_type,
+                tag=tag,
+                image_id=image_id,
             )
         except (ImgApiError, ValueError) as exc:
             return f"获取图片失败：{self._friendly(exc)}"
         except Exception:
             self.logger.exception("LLM 随机图工具执行失败")
+            return "获取图片失败，请稍后再试。"
+
+    @filter.llm_tool(name="imgapi_ai_random_image")
+    async def llm_ai_random_image(
+        self,
+        event: AstrMessageEvent,
+        choices: str = "",
+        gallery: str = "",
+        image_type: str = "",
+    ) -> str:
+        """由模型自行挑选候选标签，再从图库随机发送一张图片。
+
+        模型可以根据对话内容给出多个候选标签，插件会从候选中随机选择一个
+        并请求随机图；不提供候选时则完全随机。适合“来张风景或城市图”这类
+        让模型自行决定风格的场景。
+
+        Args:
+            choices(string): 模型选出的候选标签，多个用英文逗号分隔；留空表示不限标签。
+            gallery(string): 可选图库，v1 表示全部图库，v2 表示 V2 接口图库。
+            image_type(string): 可选输出格式，webp、png 或 origin。
+        """
+        if not self._cfg_bool("enable_ai_pick", True):
+            return "AI 自选随机图已在插件配置中关闭。"
+        if not self._client.site_url:
+            return "尚未配置图床 API 地址，请先在插件设置中填写。"
+
+        try:
+            excluded = self._exclude_tags()
+            pool: list[str] = []
+            raw_choices = sanitize_tags(
+                choices, max_tags=max(1, min(self._max_tags() * 2, 20))
+            )
+            for item in raw_choices.split(","):
+                tag = item.strip()
+                if tag and tag.lower() not in excluded and tag not in pool:
+                    pool.append(tag)
+
+            chosen = random.choice(pool) if pool else ""
+            message = await self._llm_send_random(
+                event,
+                gallery=gallery,
+                image_type=image_type,
+                tag=chosen,
+            )
+            if chosen:
+                return f"AI 选择了标签 #{chosen}。{message}"
+            if raw_choices:
+                return f"候选标签均被排除，已改为完全随机。{message}"
+            return f"AI 未限定标签，已完全随机。{message}"
+        except (ImgApiError, ValueError) as exc:
+            return f"获取图片失败：{self._friendly(exc)}"
+        except Exception:
+            self.logger.exception("LLM AI 自选随机图工具执行失败")
             return "获取图片失败，请稍后再试。"
 
     @filter.llm_tool(name="imgapi_search_gallery")
