@@ -9,6 +9,7 @@ API reference: https://imgapi.bixygames.com/docs
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import json
 import re
 from typing import Any
@@ -16,6 +17,7 @@ from urllib.parse import (
     parse_qsl,
     quote,
     urlencode,
+    urljoin,
     urlparse,
     urlsplit,
     urlunsplit,
@@ -26,8 +28,18 @@ import httpx
 USER_AGENT = "AstrBot-Plugin-ImgApi/1.0"
 NOT_CONFIGURED_MESSAGE = "尚未配置图床 API 地址，请到插件设置中填写。"
 MAX_ERROR_TEXT = 300
+MAX_TOKEN_LENGTH = 512
+MAX_REDIRECTS = 3
+MAX_JSON_BYTES = 2 * 1024 * 1024
 ID_RE = re.compile(r"^[A-Za-z0-9_-]{6,64}$")
 TOKEN_MODES = ("query", "header", "both")
+# C0/C1 controls, zero-width characters and bidi overrides. These can be used
+# to spoof chat messages, break logs or hide text in the WebUI.
+CONTROL_RE = re.compile(
+    r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f"
+    r"\u200b-\u200f\u202a-\u202e\u2066-\u2069\ufeff]"
+)
+TOKEN_QUERY_RE = re.compile(r"(?i)([?&]token=)[^&#\s]*")
 
 
 class ImgApiError(Exception):
@@ -46,19 +58,100 @@ class ImgApiError(Exception):
         self.retry_after = retry_after
 
 
+def sanitize_text(value: Any, max_length: int = 200) -> str:
+    """Strip control/zero-width characters and collapse whitespace.
+
+    Used for values that come from the image bed or from chat input before they
+    are rendered into chat messages, logs or the WebUI.
+    """
+    text = CONTROL_RE.sub("", str(value or ""))
+    text = " ".join(text.split())
+    return text[:max_length]
+
+
+def redact_secrets(text: Any, token: str | None = None) -> str:
+    """Remove tokens from free-form text (URLs, upstream error bodies, logs)."""
+    value = TOKEN_QUERY_RE.sub(r"\1***", str(text or ""))
+    cleaned = clean_token(token)
+    if len(cleaned) >= 6:
+        value = value.replace(cleaned, mask_token(cleaned))
+    return value
+
+
+def _is_private_host(host: str) -> bool:
+    """True for loopback/link-local/private addresses and local hostnames."""
+    name = (host or "").strip().lower().strip("[]")
+    if not name:
+        return True
+    if name == "localhost" or name.endswith((".localhost", ".local", ".internal")):
+        return True
+    try:
+        address = ipaddress.ip_address(name)
+    except ValueError:
+        return False
+    return bool(
+        address.is_private
+        or address.is_loopback
+        or address.is_link_local
+        or address.is_reserved
+        or address.is_multicast
+        or address.is_unspecified
+    )
+
+
+def sanitize_media_url(base_url: str, value: Any) -> str:
+    """Validate a media URL before it is rendered in a browser/chat client.
+
+    Allows same-site URLs and public CDNs, but rejects credentials, tokens,
+    non-http(s) schemes, HTTPS-to-HTTP downgrades and private/loopback hosts
+    that differ from the configured site. This prevents a compromised image
+    bed from turning the Dashboard into an internal-network probe.
+    """
+    if not isinstance(value, str):
+        return ""
+    value = sanitize_text(value, 2000)
+    if not value:
+        return ""
+    try:
+        parsed = urlsplit(value)
+        base = urlsplit(base_url)
+    except ValueError:
+        return ""
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in ("http", "https") or not parsed.hostname:
+        return ""
+    if parsed.username or parsed.password:
+        return ""
+    if (base.scheme or "").lower() == "https" and scheme != "https":
+        return ""
+    host = parsed.hostname.lower()
+    if host != (base.hostname or "").lower() and _is_private_host(host):
+        return ""
+    query = [
+        (key, item)
+        for key, item in parse_qsl(parsed.query, keep_blank_values=True)
+        if key.lower() != "token"
+    ]
+    return urlunsplit((scheme, parsed.netloc, parsed.path, urlencode(query), ""))
+
+
 def clean_token(value: str | None) -> str:
     """Normalise a token pasted by the user.
 
     Tolerates ``Bearer``, ``?token=`` and ``token=`` prefixes so users can paste
-    either a bare token or a full query fragment.
+    either a bare token or a full query fragment. Control characters, fragments
+    and extra query parameters are discarded so a pasted URL cannot smuggle
+    additional parameters into every request.
     """
-    token = (value or "").strip()
+    token = CONTROL_RE.sub("", str(value or "")).strip()
     if token.lower().startswith("bearer "):
         token = token[7:].strip()
     token = token.lstrip("?&").strip()
     if token.lower().startswith("token="):
         token = token[6:].strip()
-    return token
+    token = "".join(token.split())
+    token = token.split("&", 1)[0].split("#", 1)[0].strip()
+    return token[:MAX_TOKEN_LENGTH]
 
 
 def mask_token(token: str | None) -> str:
@@ -78,17 +171,27 @@ def normalize_base_url(value: str | None) -> str:
     hard-coded image bed. Accepts ``img.example.com`` (scheme is added) and
     preserves a path prefix for deployments behind a reverse proxy.
     """
-    raw = (value or "").strip()
+    raw = CONTROL_RE.sub("", str(value or "")).strip()
     if not raw:
         return ""
+    if any(char.isspace() for char in raw):
+        raise ValueError("图床地址不能包含空格或换行。")
     if not re.match(r"^https?://", raw, re.IGNORECASE):
         raw = "https://" + raw.lstrip("/")
 
     parsed = urlparse(raw)
+    try:
+        port = parsed.port
+    except ValueError as exc:
+        raise ValueError("图床地址的端口不合法。") from exc
     if parsed.scheme.lower() not in ("http", "https") or not parsed.netloc:
         raise ValueError("图床地址必须是合法的 http(s) URL。")
     if parsed.username or parsed.password:
         raise ValueError("图床地址不能包含用户名或密码。")
+    if parsed.query or parsed.fragment:
+        raise ValueError("图床地址不能包含查询参数或锚点，请只填写站点根地址。")
+    if port and not (1 <= port <= 65535):
+        raise ValueError("图床地址的端口不合法。")
     if len(raw) > 500:
         raise ValueError("图床地址过长。")
 
@@ -124,10 +227,9 @@ def sanitize_tags(
     raw = (value or "").replace("，", ",")
     seen: list[str] = []
     for part in raw.split(","):
-        tag = part.strip()
+        tag = sanitize_text(part, max_length)
         if not tag:
             continue
-        tag = tag[:max_length]
         if tag not in seen:
             seen.append(tag)
         if len(seen) >= max_tags:
@@ -175,7 +277,9 @@ class ImgApiClient:
         self._closed = False
         self._client = httpx.AsyncClient(
             timeout=httpx.Timeout(self.timeout),
-            follow_redirects=True,
+            # Redirects are followed manually so a cross-origin ``Location``
+            # can never receive the token or the Authorization header.
+            follow_redirects=False,
             headers={
                 "User-Agent": USER_AGENT,
                 "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -189,17 +293,43 @@ class ImgApiClient:
     def site_url(self) -> str:
         return self.base_url
 
+    @staticmethod
+    def _origin(url: str) -> tuple[str, str, int | None] | None:
+        """Return a comparable (scheme, host, port) tuple or ``None``."""
+        try:
+            parsed = urlparse(url)
+            scheme = (parsed.scheme or "").lower()
+            host = (parsed.hostname or "").lower()
+            port = parsed.port
+        except ValueError:
+            return None
+        if scheme == "https":
+            port = port or 443
+        elif scheme == "http":
+            port = port or 80
+        else:
+            return None
+        if not host:
+            return None
+        return scheme, host, port
+
     def _check_url(self, url: str) -> str:
         """Only ever talk to the configured site (or URLs it returned)."""
         if not self.base_url:
             raise ImgApiError(NOT_CONFIGURED_MESSAGE, status=400)
-        parsed = urlparse(url)
-        base = urlparse(self.base_url)
-        if parsed.scheme not in ("http", "https"):
-            raise ImgApiError("图片地址协议不受支持。")
-        if parsed.netloc.lower() != base.netloc.lower():
+        try:
+            parsed = urlparse(url)
+        except ValueError as exc:
+            raise ImgApiError("图片地址格式不正确。") from exc
+        if parsed.username or parsed.password:
+            raise ImgApiError("拒绝访问带账号信息的图片地址。")
+        if self._origin(url) is None or self._origin(url) != self._origin(
+            self.base_url
+        ):
             raise ImgApiError("拒绝访问非配置站点的地址。")
-        return url
+        # Fragments are never sent to the server; drop them so logs and
+        # payloads stay clean.
+        return urlunsplit((parsed.scheme, parsed.netloc, parsed.path, parsed.query, ""))
 
     def _url(self, path: str) -> str:
         if not self.base_url:
@@ -232,7 +362,9 @@ class ImgApiClient:
     @staticmethod
     def _strip_token(value: str) -> str:
         """Remove ``token`` from URLs before they reach chat/WebUI payloads."""
-        if not isinstance(value, str) or not value.startswith(("http://", "https://")):
+        if not isinstance(value, str) or not value.lower().startswith(
+            ("http://", "https://")
+        ):
             return value
         parts = urlsplit(value)
         pairs = parse_qsl(parts.query, keep_blank_values=True)
@@ -256,17 +388,22 @@ class ImgApiClient:
         if isinstance(value, list):
             return [self._sanitize_payload(item) for item in value]
         if isinstance(value, str):
-            return self._strip_token(value)
+            return redact_secrets(self._strip_token(value), self.token)
         return value
 
-    @staticmethod
+    def safe_media_url(self, value: Any) -> str:
+        """Return an http(s) URL that is safe to hand to the WebUI."""
+        return sanitize_media_url(self.base_url, value)
+
     def _error_from_body(
+        self,
         status: int,
         headers: Any,
         body: bytes,
     ) -> ImgApiError:
         message = ""
-        text = body.decode("utf-8", errors="replace").strip()
+        # Never decode an unbounded error page into memory.
+        text = body[:16384].decode("utf-8", errors="replace").strip()
         if text:
             try:
                 payload = json.loads(text)
@@ -283,8 +420,40 @@ class ImgApiClient:
         if not message:
             message = f"图床接口返回 HTTP {status}。"
 
-        retry_after = headers.get("retry-after")
-        return ImgApiError(message, status=status, retry_after=retry_after)
+        retry_after = sanitize_text(headers.get("retry-after"), 32) or None
+        return ImgApiError(
+            sanitize_text(redact_secrets(message, self.token), MAX_ERROR_TEXT),
+            status=status,
+            retry_after=retry_after,
+        )
+
+    async def _send_with_redirects(
+        self,
+        url: str,
+        params: dict[str, Any] | None,
+        headers: dict[str, str],
+    ) -> httpx.Response:
+        """GET with manual, same-origin-only redirect handling."""
+        current = url
+        current_params = params
+        for _ in range(MAX_REDIRECTS + 1):
+            response = await self._client.get(
+                current,
+                params=current_params,
+                headers=headers,
+            )
+            if not response.is_redirect:
+                return response
+            location = response.headers.get("location")
+            if not location:
+                return response
+            # ``_check_url`` rejects cross-site redirects, so neither the
+            # Authorization header nor a query token can be forwarded to a
+            # third-party host.
+            target = self._check_url(urljoin(str(response.url), location))
+            current = self._with_token(target)
+            current_params = None
+        raise ImgApiError("图床返回了过多跳转，已停止请求。")
 
     async def _request(
         self,
@@ -299,10 +468,10 @@ class ImgApiClient:
             request_params["token"] = self.token
         for attempt in range(self.retries + 1):
             try:
-                response = await self._client.get(
+                response = await self._send_with_redirects(
                     url,
-                    params=request_params or None,
-                    headers=self._headers(accept),
+                    request_params or None,
+                    self._headers(accept),
                 )
             except (httpx.TimeoutException, httpx.TransportError) as exc:
                 if attempt < self.retries:
@@ -313,6 +482,8 @@ class ImgApiClient:
             if response.status_code >= 500 and attempt < self.retries:
                 await asyncio.sleep(0.4 * (attempt + 1))
                 continue
+            if 300 <= response.status_code < 400:
+                raise ImgApiError("图床返回了无法跟随的跳转。")
             if response.status_code >= 400:
                 raise self._error_from_body(
                     response.status_code,
@@ -329,6 +500,8 @@ class ImgApiClient:
         params: dict[str, Any] | None = None,
     ) -> Any:
         response = await self._request(path, params)
+        if len(response.content) > MAX_JSON_BYTES:
+            raise ImgApiError("图床返回的数据过大，已停止解析。")
         try:
             data = response.json()
         except ValueError as exc:
@@ -378,20 +551,22 @@ class ImgApiClient:
         if image_id:
             params["id"] = sanitize_image_id(image_id)
         if tag:
-            params["tag"] = tag
+            params["tag"] = sanitize_tags(tag, max_tags=10)
         if tag_mode in ("any", "all"):
             params["tagMode"] = tag_mode
         if image_type in ("webp", "png", "origin"):
             params["type"] = image_type
 
         excluded = {
-            str(item).strip().lower()
+            sanitize_text(item, 32).lower()
             for item in (exclude_tags or set())
-            if str(item).strip()
+            if sanitize_text(item, 32)
         }
         if tag and excluded:
             requested = {
-                item.strip().lower() for item in tag.split(",") if item.strip()
+                sanitize_text(item, 32).lower()
+                for item in tag.split(",")
+                if sanitize_text(item, 32)
             }
             blocked = sorted(requested & excluded)
             if blocked:
@@ -417,7 +592,11 @@ class ImgApiClient:
             raw_tags = result.get("tags") or []
             if isinstance(raw_tags, str):
                 raw_tags = raw_tags.split(",")
-            tags = {str(item).strip().lower() for item in raw_tags if str(item).strip()}
+            tags = {
+                sanitize_text(item, 32).lower()
+                for item in raw_tags
+                if sanitize_text(item, 32)
+            }
             if not (tags & excluded):
                 return result
             last_excluded = result
@@ -445,9 +624,9 @@ class ImgApiClient:
             "pageSize": max(1, min(int(page_size), 200)),
         }
         if query:
-            params["q"] = query[:100]
+            params["q"] = sanitize_text(query, 100)
         if tag:
-            params["tag"] = tag
+            params["tag"] = sanitize_tags(tag, max_tags=10)
         if tag_mode in ("any", "all"):
             params["tagMode"] = tag_mode
         return self._sanitize_payload(await self._json("/list", params))
@@ -474,7 +653,7 @@ class ImgApiClient:
             "size": max(32, min(int(size), 1024)),
         }
         if user:
-            params["user"] = user[:64]
+            params["user"] = sanitize_text(user, 64)
         if image_type == "png":
             params["type"] = "png"
         return self._with_token(f"{self.base_url}/api/avatar?{urlencode(params)}")
@@ -482,17 +661,43 @@ class ImgApiClient:
     async def fetch_bytes(self, url: str) -> tuple[bytes, str]:
         """Download an image with a hard size limit and a token mode-aware request."""
         url = self._with_token(self._check_url(url))
-        async with self._client.stream(
-            "GET",
-            url,
-            headers=self._headers("image/*"),
-        ) as response:
+        response: httpx.Response | None = None
+        try:
+            for _ in range(MAX_REDIRECTS + 1):
+                request = self._client.build_request(
+                    "GET",
+                    url,
+                    headers=self._headers("image/*"),
+                )
+                response = await self._client.send(request, stream=True)
+                if not response.is_redirect:
+                    break
+                location = response.headers.get("location")
+                if not location:
+                    break
+                # Same-origin only: tokens never follow a redirect off-site.
+                target = self._check_url(urljoin(str(response.url), location))
+                await response.aclose()
+                response = None
+                url = self._with_token(target)
+
+            if response is None:
+                raise ImgApiError("图床返回了过多跳转，已停止请求。")
+            if response.is_redirect:
+                raise ImgApiError("图床返回了无法跟随的跳转。")
+
             if response.status_code >= 400:
                 body = await response.aread()
                 raise self._error_from_body(
                     response.status_code,
                     response.headers,
                     body,
+                )
+
+            content_length = response.headers.get("content-length", "")
+            if content_length.isdigit() and int(content_length) > self.max_bytes:
+                raise ImgApiError(
+                    f"图片超过 {self.max_bytes / 1024 / 1024:.1f} MB 的限制。"
                 )
 
             chunks: list[bytes] = []
@@ -505,20 +710,24 @@ class ImgApiClient:
                     )
                 chunks.append(chunk)
 
-            content_type = (
-                response.headers.get("content-type", "").split(";")[0].strip().lower()
-            )
+            content_type = sanitize_text(
+                response.headers.get("content-type", "").split(";")[0],
+                50,
+            ).lower()
             data = b"".join(chunks)
             if not data:
                 raise ImgApiError("图床返回了空图片。")
-            if content_type.startswith(("text/", "application/json")):
+            if content_type.startswith(("text/", "application/json", "image/svg")):
                 raise ImgApiError("图床返回了非图片内容，请检查 Token 是否有效。")
             head = data[:256].lstrip().lower()
-            if head.startswith((b"<!doctype", b"<html", b"{", b"[")):
+            if head.startswith((b"<!doctype", b"<html", b"<?xml", b"<svg", b"{", b"[")):
                 raise ImgApiError("图床返回了非图片内容，请检查 Token 是否有效。")
-            if not content_type.startswith("image/"):
+            if not re.fullmatch(r"image/[a-z0-9.+-]{1,30}", content_type):
                 content_type = guess_image_mime(data)
             return data, content_type
+        finally:
+            if response is not None:
+                await response.aclose()
 
     async def fetch_image_bytes(
         self,

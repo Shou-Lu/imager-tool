@@ -7,7 +7,14 @@ from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import quote
 
-from .client import ImgApiError, sanitize_image_id, sanitize_tags
+from .client import (
+    ImgApiError,
+    redact_secrets,
+    sanitize_image_id,
+    sanitize_media_url,
+    sanitize_tags,
+    sanitize_text,
+)
 
 DEFAULT_PAGE_SIZE = 24
 
@@ -63,7 +70,7 @@ def format_datetime(value: Any) -> str:
     try:
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
     except ValueError:
-        return text[:19]
+        return sanitize_text(text, 19)
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
     try:
@@ -79,7 +86,7 @@ def tags_of(image: dict[str, Any]) -> list[str]:
         tags = [item.strip() for item in tags.split(",")]
     if not isinstance(tags, list):
         return []
-    return [str(item).strip() for item in tags if str(item).strip()]
+    return [tag for tag in (sanitize_text(item, 32) for item in tags) if tag]
 
 
 def build_caption(image: dict[str, Any], gallery: str = "v1") -> str:
@@ -88,7 +95,7 @@ def build_caption(image: dict[str, Any], gallery: str = "v1") -> str:
     width, height = image.get("width"), image.get("height")
     if width and height:
         parts.append(f"{width}×{height}")
-    variant = str(image.get("variant") or "").strip().lower()
+    variant = sanitize_text(image.get("variant"), 16).lower()
     if variant:
         parts.append(
             {"png": "PNG", "origin": "原图", "webp": "WebP"}.get(variant, variant)
@@ -96,8 +103,9 @@ def build_caption(image: dict[str, Any], gallery: str = "v1") -> str:
     tags = tags_of(image)[:4]
     if tags:
         parts.append(" ".join(f"#{tag}" for tag in tags))
-    if image.get("id"):
-        parts.append(f"ID {image['id']}")
+    image_id = sanitize_text(image.get("id"), 64)
+    if image_id:
+        parts.append(f"ID {image_id}")
     if image.get("watermarked"):
         parts.append("含水印")
     return " · ".join(parts)
@@ -107,7 +115,7 @@ def friendly_error(exc: Exception) -> str:
     """Turn client exceptions into short messages suitable for chat/UI."""
     if isinstance(exc, ImgApiError):
         status = exc.status
-        detail = (exc.message or "").strip()
+        detail = sanitize_text(redact_secrets(exc.message or ""), 200)
         if status == 429:
             if exc.retry_after:
                 return f"请求过于频繁，请约 {exc.retry_after} 秒后再试。"
@@ -125,7 +133,7 @@ def friendly_error(exc: Exception) -> str:
             return "图床服务暂时不可用，请稍后再试。"
         return detail or f"图床接口返回错误（HTTP {status}）。"
     if isinstance(exc, ValueError):
-        return str(exc)
+        return sanitize_text(redact_secrets(str(exc)), 200)
     return "操作失败，请稍后再试。"
 
 
@@ -191,23 +199,23 @@ def parse_avatar_args(raw: str) -> dict[str, Any]:
         elif token.isdigit():
             result["size"] = clamp_int(token, 32, 1024, 512)
         elif not result["user"]:
-            result["user"] = token[:64]
+            result["user"] = sanitize_text(token, 64)
     return result
 
 
 def _absolute(base_url: str, value: Any, prefix: str) -> str:
     if not isinstance(value, str) or not value.strip():
         return ""
-    value = value.strip()
+    value = sanitize_text(value, 2000)
     if value.startswith(("http://", "https://")):
-        return value
-    return f"{base_url}/{prefix}/{value.lstrip('/')}"
+        return sanitize_media_url(base_url, value)
+    return sanitize_media_url(base_url, f"{base_url}/{prefix}/{value.lstrip('/')}")
 
 
 def normalize_list_item(item: Any, base_url: str) -> dict[str, Any] | None:
     if not isinstance(item, dict):
         return None
-    image_id = str(item.get("id") or item.get("_id") or "").strip()
+    image_id = sanitize_text(item.get("id") or item.get("_id"), 64)
     if not image_id:
         return None
 
@@ -227,16 +235,19 @@ def normalize_list_item(item: Any, base_url: str) -> dict[str, Any] | None:
 
     return {
         "id": image_id,
-        "title": str(item.get("title") or "").strip()[:120],
-        "source": str(item.get("source") or "").strip()[:200],
+        "title": sanitize_text(item.get("title"), 120),
+        "source": sanitize_text(item.get("source"), 200),
         "tags": tags_of(item)[:8],
-        "width": item.get("width"),
-        "height": item.get("height"),
-        "size": item.get("size") or item.get("webpSize"),
+        "width": clamp_int(item.get("width"), 0, 100000, 0) or None,
+        "height": clamp_int(item.get("height"), 0, 100000, 0) or None,
+        "size": clamp_int(item.get("size") or item.get("webpSize"), 0, 2**53, 0)
+        or None,
         "webp": webp,
         "origin": origin,
         "preview": preview,
-        "created_at": item.get("createdAt") or item.get("created_at") or "",
+        "created_at": sanitize_text(
+            item.get("createdAt") or item.get("created_at"), 40
+        ),
     }
 
 

@@ -545,6 +545,11 @@ select {
   line-height: 1.65;
 }
 
+.security-hint {
+  color: var(--warn, #f0b35b);
+  font-weight: 600;
+}
+
 .docs-row {
   display: flex;
   align-items: center;

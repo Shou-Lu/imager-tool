@@ -109,6 +109,94 @@ function setText(selector, value) {
   if (element) element.textContent = value;
 }
 
+function isPrivateHost(host) {
+  const name = String(host || "")
+    .toLowerCase()
+    .replace(/^\[|\]$/g, "");
+  if (!name) return true;
+  if (
+    name === "localhost" ||
+    name.endsWith(".localhost") ||
+    name.endsWith(".local") ||
+    name.endsWith(".internal")
+  ) {
+    return true;
+  }
+  if (/^\d+\.\d+\.\d+\.\d+$/.test(name)) {
+    const parts = name.split(".").map(Number);
+    return (
+      parts[0] === 0 ||
+      parts[0] === 10 ||
+      parts[0] === 127 ||
+      (parts[0] === 169 && parts[1] === 254) ||
+      (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
+      (parts[0] === 192 && parts[1] === 168)
+    );
+  }
+  if (name === "::1" || name === "::") return true;
+  if (/^(fc|fd|fe8|fe9|fea|feb)/.test(name)) return true;
+  return false;
+}
+
+function safeMediaUrl(value) {
+  if (typeof value !== "string" || !value.trim()) return "";
+  try {
+    const url = new URL(value, window.location.href);
+    if (url.protocol !== "http:" && url.protocol !== "https:") return "";
+    if (url.username || url.password) return "";
+    url.searchParams.delete("token");
+    const base = state.config?.base_url;
+    if (base) {
+      const baseUrl = new URL(base, window.location.href);
+      if (baseUrl.protocol === "https:" && url.protocol !== "https:") return "";
+      if (url.hostname !== baseUrl.hostname && isPrivateHost(url.hostname)) {
+        return "";
+      }
+    }
+    return url.toString();
+  } catch {
+    return "";
+  }
+}
+
+function setImageSource(img, value) {
+  const safe = safeMediaUrl(value);
+  if (!safe) {
+    img.removeAttribute("src");
+    img.style.display = "none";
+    return false;
+  }
+  img.referrerPolicy = "no-referrer";
+  img.style.display = "";
+  img.src = safe;
+  return true;
+}
+
+function updateSecurityHint(config) {
+  const hint = $("#security-hint");
+  if (!hint) return;
+  const base = String(config?.base_url || "");
+  const messages = [];
+  if (base.startsWith("http://")) {
+    messages.push(
+      t(
+        "views.gallery.settings.securityHttp",
+        "当前使用明文 HTTP，Token 与图片内容可能被中间人窃听；建议改用 HTTPS 地址。",
+      ),
+    );
+  }
+  if (base && (config?.token_mode || "query") !== "header") {
+    messages.push(
+      t(
+        "views.gallery.settings.securityToken",
+        "Token 通过 URL 参数传递，可能被日志或代理记录；站点支持时建议改用 Authorization 请求头。",
+      ),
+    );
+  }
+  hint.textContent = messages.join(" ");
+  hint.hidden = messages.length === 0;
+}
+
 function applyTheme(theme) {
   const value = theme === "light" ? "light" : "dark";
   document.documentElement.dataset.theme = value;
@@ -140,18 +228,25 @@ function docsUrl() {
 }
 
 function updateDocsLink() {
-  const url = docsUrl();
+  const raw = docsUrl();
+  const url = safeMediaUrl(raw);
   const link = $("#docs-link");
   if (!link) return;
+  if (!url) {
+    link.hidden = true;
+    return;
+  }
+  link.hidden = false;
   link.href = url;
-  link.textContent = url;
+  link.textContent = raw;
 }
 
 function openDocs() {
-  const url = docsUrl();
+  const url = safeMediaUrl(docsUrl());
+  if (!url) return;
   let opened = null;
   try {
-    opened = window.open(url, "_blank");
+    opened = window.open(url, "_blank", "noopener,noreferrer");
   } catch {
     opened = null;
   }
@@ -752,7 +847,12 @@ function renderPreview(data) {
   if (img) {
     img.hidden = false;
     img.alt = image.title || image.id || "random image";
-    img.src = url;
+    if (!setImageSource(img, url)) {
+      showPreviewError(
+        t("views.gallery.preview.unsafeUrl", "图床返回的图片地址不安全，已阻止加载。"),
+      );
+      return;
+    }
     img.onerror = () => {
       showPreviewError(t("views.gallery.preview.failed", "图片加载失败，请检查网络或站点地址。"));
     };
@@ -918,9 +1018,12 @@ async function openOriginal() {
     const data = await getPreviewData();
     const wrapper = document.createDocumentFragment();
     const img = createElement("img");
-    img.src = data.data_url;
-    img.alt = state.current.image.title || state.current.image.id || "original";
-    wrapper.appendChild(img);
+    const dataUrl = typeof data.data_url === "string" ? data.data_url : "";
+    if (dataUrl.startsWith("data:image/")) {
+      img.src = dataUrl;
+      img.alt = state.current.image.title || state.current.image.id || "original";
+      wrapper.appendChild(img);
+    }
 
     if (data.notice) {
       wrapper.appendChild(createElement("p", "notice", data.notice));
@@ -1165,7 +1268,7 @@ function renderLibrary(data) {
     const img = document.createElement("img");
     img.loading = "lazy";
     img.alt = item.title || item.id;
-    img.src = item.preview || item.webp || item.origin;
+    setImageSource(img, item.preview || item.webp || item.origin);
     img.addEventListener("error", () => {
       img.style.display = "none";
     });
@@ -1216,9 +1319,10 @@ async function showInfo(id) {
 
     if (data.preview_url) {
       const img = createElement("img");
-      img.src = data.preview_url;
       img.alt = info.title || info.id || "image";
-      wrapper.appendChild(img);
+      if (setImageSource(img, data.preview_url)) {
+        wrapper.appendChild(img);
+      }
     }
 
     const list = createElement("dl", "detail-list");
@@ -1308,6 +1412,7 @@ function fillSettings(config) {
   $("#set-max-tags").value = config.max_tags ?? 5;
   $("#set-webui-page").value = config.webui_page_size ?? 24;
   $("#set-command-page").value = config.command_page_size ?? 8;
+  updateSecurityHint(config);
 
   const pageSize = $("#lib-page-size");
   if (pageSize) {

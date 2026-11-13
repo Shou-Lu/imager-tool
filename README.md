@@ -213,10 +213,15 @@ GET https://imgapi.bixygames.com/api/v1?id=<IMAGE_ID>&type=origin&token=xxx
 ## 安全说明
 
 - Token 存放在插件配置中，`_conf_schema.json` 已将其标记为 `secret`；WebUI 只回显 `前4位******后4位`。
-- 所有图片下载只允许访问 `base_url` 对应的主机，避免被上游 JSON 引导到任意地址。
-- WebUI 后端只通过 AstrBot Bridge 暴露，不直接使用 Dashboard Cookie；设置写入依赖 Dashboard 登录态。
+- **Token 不出站**：所有请求只允许访问 `base_url` 对应的源；跨站 `Location` 跳转会被拒绝，`Authorization` 和 `?token=` 不会转发给第三方主机。
+- **Token 不回落**：上游错误页、日志、聊天消息和 WebUI 数据中的 `token=` 与完整 Token 都会被替换为 `***` / 掩码。
+- **媒体 URL 校验**：返回给浏览器的图片地址只允许 `http(s)`，会移除 `token` 参数，拒绝 `javascript:` / `data:` / 带账号信息的 URL、HTTPS 降级和私网/回环地址，并给图片加上 `referrerpolicy=no-referrer`。
+- **输入清洗**：标签、搜索词、用户名、图床标题/来源等会去除换行、控制字符、零宽字符和双向覆盖字符，避免聊天消息伪造、日志注入和 WebUI 显示欺骗。
+- **大小限制**：JSON 响应限制 2 MB，图片按 `max_image_mb` 截断，错误页只读取前 16 KB，避免上游用超大响应耗尽内存。
+- **配置审计**：保存设置时记录 `base_url`、Token 传递方式和是否配置 Token，但从不写入 Token 本身。
+- **安全提示**：设置页会对明文 HTTP 和 URL 参数传递 Token 显示警告；站点支持时建议使用 `token_mode=header` 与 HTTPS。
+- WebUI 后端只通过 AstrBot Bridge 暴露，插件 Web API 继承 Dashboard 登录鉴权；设置写入依赖 Dashboard 登录态。
 - 默认使用 `?token=` 调用；插件返回聊天/WebUI 的 URL 会自动移除 token，复制出来的链接不含 Token。
-- URL 参数可能被上游、代理或调试日志记录；如果站点支持请求头，建议设置 `token_mode=header`。
 - 如果 Token 泄漏：到图床个人中心吊销并重新创建，然后更新插件配置。
 
 ## 开发

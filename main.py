@@ -28,8 +28,10 @@ try:
         clean_token,
         mask_token,
         normalize_base_url,
+        redact_secrets,
         sanitize_image_id,
         sanitize_tags,
+        sanitize_text,
     )
     from .bixyimg.util import (
         build_caption,
@@ -52,8 +54,10 @@ except ImportError:  # pragma: no cover - only used outside a package context
         clean_token,
         mask_token,
         normalize_base_url,
+        redact_secrets,
         sanitize_image_id,
         sanitize_tags,
+        sanitize_text,
     )
     from bixyimg.util import (
         build_caption,
@@ -130,9 +134,9 @@ class BixyImgPlugin(Star):
         else:
             parts = []
         return {
-            item.strip().lstrip("#").lower()
-            for item in parts
-            if item and item.strip().lstrip("#")
+            tag
+            for tag in (sanitize_text(item, 32).lstrip("#").lower() for item in parts)
+            if tag
         }
 
     def _exclude_retries(self) -> int:
@@ -193,6 +197,10 @@ class BixyImgPlugin(Star):
     def _max_tags(self) -> int:
         return self._cfg_int("max_tags", 5, 1, 10)
 
+    def _friendly(self, exc: Exception) -> str:
+        """Error text that can never contain the configured token."""
+        return redact_secrets(friendly_error(exc), self._client.token)
+
     def _make_client(self) -> ImgApiClient:
         options = {
             "token": self.config.get("token") or "",
@@ -224,6 +232,8 @@ class BixyImgPlugin(Star):
             "token_configured": bool(self._client.token),
             "token_masked": mask_token(self._client.token),
             "token_mode": self._token_mode(),
+            "base_url_secure": self._client.site_url.lower().startswith("https://"),
+            "token_mode_secure": self._token_mode() == "header",
             "origin_available": self._origin_available(),
             "png_available": bool(self._client.token),
             "default_gallery": self._default_gallery(),
@@ -323,19 +333,29 @@ class BixyImgPlugin(Star):
             try:
                 return await handler(*args, **kwargs)
             except ImgApiError as exc:
-                self.logger.warning("图床接口错误: %s", exc.message)
+                self.logger.warning("图床接口错误: %s", self._friendly(exc))
                 # Never forward upstream 401/403/404/429 to the Dashboard:
                 # AstrBot's axios interceptor treats any same-origin /api/* 401
                 # as an expired Dashboard session and redirects to /auth/login.
                 # Upstream image-bed auth failures are a plugin concern, so map
                 # them to 400 and let the WebUI render the message.
-                return error_response(friendly_error(exc), status_code=400)
+                return error_response(
+                    self._friendly(exc),
+                    status_code=400,
+                    headers={"Cache-Control": "no-store"},
+                )
             except ValueError as exc:
-                return error_response(str(exc), status_code=400)
+                return error_response(
+                    sanitize_text(str(exc), 200),
+                    status_code=400,
+                    headers={"Cache-Control": "no-store"},
+                )
             except Exception:
                 self.logger.exception("图床 Web API 处理失败")
                 return error_response(
-                    "插件处理请求失败，请查看 AstrBot 日志。", status_code=500
+                    "插件处理请求失败，请查看 AstrBot 日志。",
+                    status_code=500,
+                    headers={"Cache-Control": "no-store"},
                 )
 
         return wrapper
@@ -356,7 +376,8 @@ class BixyImgPlugin(Star):
                     "tags": [],
                     "config": self._public_config(),
                     "version": PLUGIN_VERSION,
-                }
+                },
+                headers={"Cache-Control": "no-store"},
             )
 
         force = str(request.query.get("force") or "").lower() in ("1", "true", "yes")
@@ -369,15 +390,15 @@ class BixyImgPlugin(Star):
         site: dict[str, Any] | None = None
         site_error: str | None = None
         if isinstance(stats_result, Exception):
-            site_error = friendly_error(stats_result)
-            self.logger.warning("读取图库统计失败: %s", stats_result)
+            site_error = self._friendly(stats_result)
+            self.logger.warning("读取图库统计失败: %s", site_error)
         else:
             site = stats_result
 
         health: dict[str, Any] | None = None
         health_error: str | None = None
         if isinstance(health_result, Exception):
-            health_error = friendly_error(health_result)
+            health_error = self._friendly(health_result)
         else:
             health = health_result
 
@@ -391,7 +412,8 @@ class BixyImgPlugin(Star):
                 "tags": (site or {}).get("tags", []),
                 "config": self._public_config(),
                 "version": PLUGIN_VERSION,
-            }
+            },
+            headers={"Cache-Control": "no-store"},
         )
 
     async def api_random(self):
@@ -447,7 +469,7 @@ class BixyImgPlugin(Star):
             {
                 "gallery": mode,
                 "image": image,
-                "preview_url": preview or image.get("webp"),
+                "preview_url": self._client.safe_media_url(preview),
                 "notice": None,
             }
         )
@@ -547,7 +569,7 @@ class BixyImgPlugin(Star):
             100,
             self._cfg_int("webui_page_size", 24, 6, 60),
         )
-        query = (request.query.get("q") or "").strip()[:100]
+        query = sanitize_text(request.query.get("q"), 100)
         tag = sanitize_tags(request.query.get("tag"), max_tags=self._max_tags())
         tag_mode = str(
             request.query.get("tag_mode") or self._default_tag_mode()
@@ -581,10 +603,15 @@ class BixyImgPlugin(Star):
             raise ValueError("请提供图片 ID。")
         info = await self._client.info(image_id)
 
-        preview = info.get("webpUrl") or info.get("url") or ""
-        if not str(preview).startswith(("http://", "https://")):
+        preview = self._client.safe_media_url(
+            info.get("webpUrl") or info.get("url") or ""
+        )
+        if not preview:
             preview = f"{self._client.site_url}/api/v1?id={image_id}&type=webp"
-        return json_response({"info": info, "preview_url": preview})
+        return json_response(
+            {"info": info, "preview_url": preview},
+            headers={"Cache-Control": "no-store"},
+        )
 
     async def api_health(self):
         started = time.perf_counter()
@@ -596,11 +623,15 @@ class BixyImgPlugin(Star):
                 "health": health,
                 "latency_ms": latency,
                 "config": self._public_config(),
-            }
+            },
+            headers={"Cache-Control": "no-store"},
         )
 
     async def api_settings_get(self):
-        return json_response({"config": self._public_config()})
+        return json_response(
+            {"config": self._public_config()},
+            headers={"Cache-Control": "no-store"},
+        )
 
     async def api_settings_save(self):
         payload = await request.json(default={})
@@ -614,7 +645,10 @@ class BixyImgPlugin(Star):
 
         token_value = payload.get("token")
         if isinstance(token_value, str) and token_value.strip():
-            self.config["token"] = clean_token(token_value)
+            cleaned_token = clean_token(token_value)
+            if not cleaned_token:
+                raise ValueError("Token 格式不正确。")
+            self.config["token"] = cleaned_token
         if payload.get("clear_token") is True:
             self.config["token"] = ""
 
@@ -671,7 +705,7 @@ class BixyImgPlugin(Star):
                 parts = []
             exclude: list[str] = []
             for part in parts:
-                tag = str(part).strip().lstrip("#").lower()[:32]
+                tag = sanitize_text(part, 32).lstrip("#").lower()
                 if tag and tag not in exclude:
                     exclude.append(tag)
             self.config["exclude_tags"] = exclude[:20]
@@ -690,7 +724,17 @@ class BixyImgPlugin(Star):
             save_sync()
 
         await self._replace_client()
-        return json_response({"saved": True, "config": self._public_config()})
+        # Audit trail without ever writing the token itself.
+        self.logger.info(
+            "插件配置已更新: base_url=%s token_mode=%s token_configured=%s",
+            self._client.site_url or "(empty)",
+            self._token_mode(),
+            bool(self._client.token),
+        )
+        return json_response(
+            {"saved": True, "config": self._public_config()},
+            headers={"Cache-Control": "no-store"},
+        )
 
     # ------------------------------------------------------------------
     # Chat command helpers
@@ -817,10 +861,10 @@ class BixyImgPlugin(Star):
                 components.append(Comp.Plain(caption))
 
             if send_mode == "url":
-                url = image.get("url") or image.get("webp")
+                url = self._client.safe_media_url(image.get("url") or image.get("webp"))
                 if not url:
-                    raise ImgApiError("图床没有返回可用的图片地址。")
-                components.append(Comp.Image.fromURL(str(url)))
+                    raise ImgApiError("图床没有返回安全的图片地址。")
+                components.append(Comp.Image.fromURL(url))
             else:
                 data, _ = await self._fetch_selected(image, options["type"])
                 components.append(Comp.Image.fromBytes(data))
@@ -828,12 +872,12 @@ class BixyImgPlugin(Star):
             yield event.chain_result(components)
             self.logger.info(
                 "随机图已发送: id=%s gallery=%s type=%s",
-                image.get("id"),
+                sanitize_text(image.get("id"), 64),
                 options["gallery"],
                 options["type"],
             )
         except (ImgApiError, ValueError) as exc:
-            yield event.plain_result(f"❌ {friendly_error(exc)}")
+            yield event.plain_result(f"❌ {self._friendly(exc)}")
         except Exception:
             self.logger.exception("随机图指令执行失败")
             yield event.plain_result("❌ 获取图片失败，请查看 AstrBot 日志。")
@@ -866,7 +910,7 @@ class BixyImgPlugin(Star):
                 lines.append(f"➡️ /图库列表 {page + 1}{suffix}")
             yield event.plain_result("\n".join(lines))
         except (ImgApiError, ValueError) as exc:
-            yield event.plain_result(f"❌ {friendly_error(exc)}")
+            yield event.plain_result(f"❌ {self._friendly(exc)}")
         except Exception:
             self.logger.exception("图库列表指令执行失败")
             yield event.plain_result("❌ 读取图库失败，请查看 AstrBot 日志。")
@@ -893,7 +937,7 @@ class BixyImgPlugin(Star):
             lines = self._format_gallery_items(items, total, 1, page_size, "图库搜索")
             yield event.plain_result("\n".join(lines))
         except (ImgApiError, ValueError) as exc:
-            yield event.plain_result(f"❌ {friendly_error(exc)}")
+            yield event.plain_result(f"❌ {self._friendly(exc)}")
         except Exception:
             self.logger.exception("图库搜索指令执行失败")
             yield event.plain_result("❌ 搜索图库失败，请查看 AstrBot 日志。")
@@ -903,7 +947,8 @@ class BixyImgPlugin(Star):
         """查看图库统计和站点状态。用法: /图库统计"""
         try:
             site = await self._get_stats()
-            lines = [f"🏷️ {site.get('siteName') or '图床'} 统计"]
+            site_name = sanitize_text(site.get("siteName"), 80) or "图床"
+            lines = [f"🏷️ {site_name} 统计"]
             lines.append(f"🖼️ 图片总数: {site.get('count', '-')}")
 
             total_size = site.get("totalSize")
@@ -916,11 +961,12 @@ class BixyImgPlugin(Star):
             elif site.get("totalSizeMB") is not None:
                 lines.append(f"💾 总大小: {site['totalSizeMB']} MB")
 
-            tags = site.get("tags") or []
-            lines.append(
-                "🏷️ 标签: "
-                + ("、".join(str(tag) for tag in tags[:20]) if tags else "暂无")
-            )
+            tags = [
+                sanitize_text(tag, 32)
+                for tag in (site.get("tags") or [])[:20]
+                if sanitize_text(tag, 32)
+            ]
+            lines.append("🏷️ 标签: " + ("、".join(tags) if tags else "暂无"))
             if site.get("newest"):
                 lines.append(f"🕒 最新图片: {format_datetime(site['newest'])}")
 
@@ -937,7 +983,7 @@ class BixyImgPlugin(Star):
 
             yield event.plain_result("\n".join(lines))
         except (ImgApiError, ValueError) as exc:
-            yield event.plain_result(f"❌ {friendly_error(exc)}")
+            yield event.plain_result(f"❌ {self._friendly(exc)}")
         except Exception:
             self.logger.exception("图库统计指令执行失败")
             yield event.plain_result("❌ 读取统计失败，请查看 AstrBot 日志。")
@@ -957,15 +1003,15 @@ class BixyImgPlugin(Star):
         try:
             info = await self._client.info(image_id)
         except (ImgApiError, ValueError) as exc:
-            yield event.plain_result(f"❌ {friendly_error(exc)}")
+            yield event.plain_result(f"❌ {self._friendly(exc)}")
             return
         except Exception:
             self.logger.exception("图库信息指令执行失败")
             yield event.plain_result("❌ 读取图片信息失败，请查看 AstrBot 日志。")
             return
 
-        lines = [f"🖼️ {info.get('title') or '图片详情'}"]
-        lines.append(f"ID: {info.get('id')}")
+        lines = [f"🖼️ {sanitize_text(info.get('title'), 120) or '图片详情'}"]
+        lines.append(f"ID: {sanitize_text(info.get('id'), 64)}")
         if info.get("width") and info.get("height"):
             lines.append(f"尺寸: {info['width']}×{info['height']}")
         if info.get("size") is not None:
@@ -974,23 +1020,24 @@ class BixyImgPlugin(Star):
         if tags:
             lines.append("标签: " + " ".join(f"#{tag}" for tag in tags))
         if info.get("source"):
-            lines.append(f"来源: {info['source']}")
+            lines.append(f"来源: {sanitize_text(info['source'], 200)}")
         if info.get("mime"):
-            lines.append(f"格式: {info['mime']}")
+            lines.append(f"格式: {sanitize_text(info['mime'], 32)}")
         if info.get("status"):
-            lines.append(f"状态: {info['status']}")
+            lines.append(f"状态: {sanitize_text(info['status'], 32)}")
         if info.get("createdAt"):
             lines.append(f"上传时间: {format_datetime(info['createdAt'])}")
         if info.get("watermarked") is not None:
             lines.append(f"接口水印: {'是' if info.get('watermarked') else '否'}")
-        if info.get("url"):
-            lines.append(f"直链: {info['url']}")
-        if info.get("apiUrl"):
-            lines.append(f"API: {info['apiUrl']}")
+        direct_url = self._client.safe_media_url(info.get("url"))
+        if direct_url:
+            lines.append(f"直链: {direct_url}")
+        api_url = self._client.safe_media_url(info.get("apiUrl"))
+        if api_url:
+            lines.append(f"API: {api_url}")
         elif info.get("id"):
-            lines.append(
-                f"API: {self._client.site_url}/api/v1?id={info['id']}&type=webp"
-            )
+            image_id = sanitize_text(info.get("id"), 64)
+            lines.append(f"API: {self._client.site_url}/api/v1?id={image_id}&type=webp")
         yield event.plain_result("\n".join(lines))
 
     @filter.command("图库标签", alias={"图库标签列表"})
@@ -1022,7 +1069,7 @@ class BixyImgPlugin(Star):
             lines.append("提示: /随机图 标签1,标签2")
             yield event.plain_result("\n".join(lines))
         except (ImgApiError, ValueError) as exc:
-            yield event.plain_result(f"❌ {friendly_error(exc)}")
+            yield event.plain_result(f"❌ {self._friendly(exc)}")
         except Exception:
             self.logger.exception("图库标签指令执行失败")
             yield event.plain_result("❌ 读取标签失败，请查看 AstrBot 日志。")
@@ -1046,7 +1093,7 @@ class BixyImgPlugin(Star):
             components.append(Comp.Image.fromBytes(data))
             yield event.chain_result(components)
         except (ImgApiError, ValueError) as exc:
-            yield event.plain_result(f"❌ {friendly_error(exc)}")
+            yield event.plain_result(f"❌ {self._friendly(exc)}")
         except Exception:
             self.logger.exception("图库头像指令执行失败")
             yield event.plain_result("❌ 获取头像失败，请查看 AstrBot 日志。")
@@ -1145,7 +1192,7 @@ class BixyImgPlugin(Star):
                 f"格式={image.get('variant') or type_value}，标签={tags}。"
             )
         except (ImgApiError, ValueError) as exc:
-            return f"获取图片失败：{friendly_error(exc)}"
+            return f"获取图片失败：{self._friendly(exc)}"
         except Exception:
             self.logger.exception("LLM 随机图工具执行失败")
             return "获取图片失败，请稍后再试。"
@@ -1167,7 +1214,7 @@ class BixyImgPlugin(Star):
         """
         if not self._client.site_url:
             return "尚未配置图床 API 地址，请先在插件设置中填写。"
-        query_value = str(query).strip()[:100]
+        query_value = sanitize_text(query, 100)
         tag_value = sanitize_tags(tag, max_tags=self._max_tags())
         if not query_value and not tag_value:
             return "请提供搜索关键词或标签。"
@@ -1191,7 +1238,7 @@ class BixyImgPlugin(Star):
                 )
             )
         except (ImgApiError, ValueError) as exc:
-            return f"搜索图库失败：{friendly_error(exc)}"
+            return f"搜索图库失败：{self._friendly(exc)}"
         except Exception:
             self.logger.exception("LLM 图库搜索工具执行失败")
             return "搜索图库失败，请稍后再试。"
@@ -1203,18 +1250,20 @@ class BixyImgPlugin(Star):
             return "尚未配置图床 API 地址，请先在插件设置中填写。"
         try:
             site = await self._get_stats(force=True)
-            lines = [f"🏷️ {site.get('siteName') or '图床'} 统计"]
+            site_name = sanitize_text(site.get("siteName"), 80) or "图床"
+            lines = [f"🏷️ {site_name} 统计"]
             lines.append(f"🖼️ 图片总数: {site.get('count', '-')}")
             if site.get("totalSize") is not None:
                 size_line = f"💾 总大小: {format_bytes(site['totalSize'])}"
                 if site.get("webpSize") is not None:
                     size_line += f"（WebP {format_bytes(site['webpSize'])}）"
                 lines.append(size_line)
-            tags = site.get("tags") or []
-            lines.append(
-                "🏷️ 标签: "
-                + ("、".join(str(tag) for tag in tags[:20]) if tags else "暂无")
-            )
+            tags = [
+                sanitize_text(tag, 32)
+                for tag in (site.get("tags") or [])[:20]
+                if sanitize_text(tag, 32)
+            ]
+            lines.append("🏷️ 标签: " + ("、".join(tags) if tags else "暂无"))
             if site.get("newest"):
                 lines.append(f"🕒 最新图片: {format_datetime(site['newest'])}")
             try:
@@ -1226,7 +1275,7 @@ class BixyImgPlugin(Star):
                 lines.append("⚠️ 服务状态: 无法获取")
             return "\n".join(lines)
         except (ImgApiError, ValueError) as exc:
-            return f"读取统计失败：{friendly_error(exc)}"
+            return f"读取统计失败：{self._friendly(exc)}"
         except Exception:
             self.logger.exception("LLM 图库统计工具执行失败")
             return "读取统计失败，请稍后再试。"
@@ -1250,13 +1299,13 @@ class BixyImgPlugin(Star):
         try:
             info = await self._client.info(image_id_value)
         except (ImgApiError, ValueError) as exc:
-            return f"读取图片信息失败：{friendly_error(exc)}"
+            return f"读取图片信息失败：{self._friendly(exc)}"
         except Exception:
             self.logger.exception("LLM 图片详情工具执行失败")
             return "读取图片信息失败，请稍后再试。"
 
-        lines = [f"🖼️ {info.get('title') or '图片详情'}"]
-        lines.append(f"ID: {info.get('id')}")
+        lines = [f"🖼️ {sanitize_text(info.get('title'), 120) or '图片详情'}"]
+        lines.append(f"ID: {sanitize_text(info.get('id'), 64)}")
         if info.get("width") and info.get("height"):
             lines.append(f"尺寸: {info['width']}×{info['height']}")
         if info.get("size") is not None:
@@ -1265,15 +1314,17 @@ class BixyImgPlugin(Star):
         if tags:
             lines.append("标签: " + " ".join(f"#{tag}" for tag in tags))
         if info.get("source"):
-            lines.append(f"来源: {info['source']}")
+            lines.append(f"来源: {sanitize_text(info['source'], 200)}")
         if info.get("status"):
-            lines.append(f"状态: {info['status']}")
+            lines.append(f"状态: {sanitize_text(info['status'], 32)}")
         if info.get("createdAt"):
             lines.append(f"上传时间: {format_datetime(info['createdAt'])}")
-        if info.get("url"):
-            lines.append(f"直链: {info['url']}")
-        if info.get("apiUrl"):
-            lines.append(f"API: {info['apiUrl']}")
+        direct_url = self._client.safe_media_url(info.get("url"))
+        if direct_url:
+            lines.append(f"直链: {direct_url}")
+        api_url = self._client.safe_media_url(info.get("apiUrl"))
+        if api_url:
+            lines.append(f"API: {api_url}")
         return "\n".join(lines)
 
     @filter.llm_tool(name="imgapi_user_avatar")
@@ -1294,7 +1345,7 @@ class BixyImgPlugin(Star):
         if not self._client.site_url:
             return "尚未配置图床 API 地址，请先在插件设置中填写。"
         try:
-            user_value = str(user).strip()[:64]
+            user_value = sanitize_text(user, 64)
             type_value = str(image_type).strip().lower()
             if type_value not in ("jpg", "png"):
                 type_value = "jpg"
@@ -1307,7 +1358,7 @@ class BixyImgPlugin(Star):
             await event.send(event.chain_result([Comp.Image.fromBytes(data)]))
             return f"已发送 {user_value or '当前用户/站长'} 的头像。"
         except (ImgApiError, ValueError) as exc:
-            return f"获取头像失败：{friendly_error(exc)}"
+            return f"获取头像失败：{self._friendly(exc)}"
         except Exception:
             self.logger.exception("LLM 头像工具执行失败")
             return "获取头像失败，请稍后再试。"
